@@ -26,19 +26,6 @@ The `codex-multi` provider exposes all Codex models supported by the installed m
 - Marks accounts unavailable after authentication failures, and applies quota/rate-limit cooldowns to the affected account/model combination before failing over.
 - Provides `/codex-accounts` to add, reauthenticate, enable, disable, remove, refresh, and inspect the store path for accounts.
 
-### Thinking levels
-
-The model exposes these thinking levels:
-
-- `off` / `none`
-- `low`
-- `medium`
-- `high`
-- `xhigh`
-- `max`
-
-`minimal` is unsupported and hidden by the model mapping.
-
 ## Account store and security
 
 The default store is:
