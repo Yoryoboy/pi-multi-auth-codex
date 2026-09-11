@@ -1,25 +1,39 @@
 {
-  "name": "pi-extension-codex-multi",
+  "name": "pi-multi-auth-codex",
   "version": "0.1.0",
-  "description": "Phase 0 Codex multi-account transport spike for Pi",
+  "description": "Pi extension for multi-account Codex OAuth rotation and failover",
   "type": "module",
-  "private": false,
+  "license": "MIT",
+  "author": "Yoryoboy",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Yoryoboy/pi-multi-auth-codex.git"
+  },
+  "homepage": "https://github.com/Yoryoboy/pi-multi-auth-codex",
+  "bugs": {
+    "url": "https://github.com/Yoryoboy/pi-multi-auth-codex/issues"
+  },
+  "keywords": ["pi-package", "pi-extension", "codex", "oauth", "multi-account"],
+  "files": ["src", "README.md", "LICENSE"],
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "test:bun": "pi -e ./tests/bun-store-smoke.ts --list-models"
+    "test:bun": "pi -e ./tests/bun-store-smoke.ts --list-models",
+    "prepack": "npm run typecheck && npm test"
   },
   "pi": {
-    "extensions": [
-      "./src/index.ts"
-    ]
+    "extensions": ["./src/index.ts"]
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.85.1",
-    "@earendil-works/pi-coding-agent": "^0.85.1",
     "proper-lockfile": "^4.1.2"
   },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
   "devDependencies": {
+    "@earendil-works/pi-ai": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
     "@types/node": "^22.19.19",
     "@types/proper-lockfile": "^4.1.4",
     "typescript": "^5.9.3",
