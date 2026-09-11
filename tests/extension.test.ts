@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import extension from "../src/index.js";
 import { runAccountManager } from "../src/ui/account-manager.js";
 function piHarness() { const handlers: any = {}; const events: any = {}; return { handlers, events, pi: { registerProvider: vi.fn(), registerCommand: vi.fn((name: string, command: any) => { handlers[name] = command.handler; }), on: vi.fn((event: string, listener: any) => { events[event] = listener; }) } as any }; }
-function ctx(mode: string, hasUI = true) { return { mode, hasUI, ui: { notify: vi.fn(), setStatus: vi.fn(), theme: { fg: (_: string, value: string) => value } } }; }
+function ctx(mode: string, hasUI = true) { return { mode, hasUI, modelRegistry: { getAll: vi.fn(() => []) }, ui: { notify: vi.fn(), setStatus: vi.fn(), theme: { fg: (_: string, value: string) => value } } }; }
 function deferred<T = void>() { let resolve!: (value: T) => void; let reject!: (error: unknown) => void; const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; }
 function pendingOAuth() { const cleanup = deferred<void>(); const operation: any = new Promise((_resolve, reject) => { cleanup.promise.then(() => reject(Object.assign(new Error("aborted"), { code: "OAUTH_ABORTED" }))); }); operation.ready = Promise.resolve({ url: "https://auth.example.test", state: "state", redirectUri: "http://localhost", port: 1455, pkce: { verifier: "v", challenge: "c" } }); operation.getFlow = () => undefined; return { operation, cleanup }; }
 describe("Pi extension registration", () => {

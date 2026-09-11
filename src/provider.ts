@@ -1,6 +1,6 @@
 import { createAssistantMessageEventStream, openAICodexResponsesApi, type Api, type AssistantMessageEvent, type Model, type SimpleStreamOptions, type StreamFunction } from "@earendil-works/pi-ai/compat";
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { OPENAI_CODEX_MODELS } from "@earendil-works/pi-ai/providers/openai-codex.models";
 import { AccountStore, StoreCommitUncertainError } from "./accounts/store.js";
 import { AccountSelectionError } from "./accounts/selector.js";
 import { TokenManager, TokenManagerError } from "./auth/token-manager.js";
@@ -9,10 +9,10 @@ export const RATE_LIMIT_MIN_DELAY_MS = 1_000, RATE_LIMIT_MAX_DELAY_MS = 60_000, 
 export interface CodexAccount { accessToken: string; accountId: string; accountKey: string; refreshToken: string; }
 export type AccountResolver = (signal?: AbortSignal, modelId?: string, excludeAccountKeys?: ReadonlySet<string>) => CodexAccount | undefined | Promise<CodexAccount | undefined>;
 export type ResponsesStreamer = StreamFunction<Api, SimpleStreamOptions>;
-export interface CodexMultiOptions { resolveAccount: AccountResolver; streamResponses?: ResponsesStreamer; store?: AccountStore; sleep?: (ms: number, signal?: AbortSignal) => Promise<void>; now?: () => number; }
+export interface CodexMultiOptions { resolveAccount: AccountResolver; models?: readonly Model<Api>[]; streamResponses?: ResponsesStreamer; store?: AccountStore; sleep?: (ms: number, signal?: AbortSignal) => Promise<void>; now?: () => number; }
 
-const MODELS: Model<"openai-codex-responses">[] = Object.values(OPENAI_CODEX_MODELS).map(model => ({ ...model, provider: "codex-multi" }));
-const DEFAULT_MODEL_ID = MODELS[0]?.id ?? "gpt-5.6-sol";
+const DEFAULT_MODELS = openaiCodexProvider().getModels();
+const DEFAULT_MODEL_ID = DEFAULT_MODELS[0]?.id ?? "gpt-5.6-sol";
 function safeError(message: string, aborted = false, modelId = DEFAULT_MODEL_ID): AssistantMessageEvent { return { type: "error", reason: aborted ? "aborted" : "error", error: { role: "assistant", content: [], api: "openai-codex-responses", provider: "codex-multi", model: modelId, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: aborted ? "aborted" : "error", errorMessage: message, timestamp: Date.now() } } as AssistantMessageEvent; }
 function cooldownDeadline(account: CodexAccount & { rateLimitedUntil?: number | null; rateLimitedUntilByModel?: Record<string, number> }, modelId: string, now: number, delay: number) {
   return Math.max(account.rateLimitedUntil ?? 0, account.rateLimitedUntilByModel?.[modelId] ?? 0, account.rateLimitedUntilByModel?.["*"] ?? 0, now + delay);
@@ -62,6 +62,7 @@ async function defaultSleep(ms: number, signal?: AbortSignal) {
 }
 
 export function createCodexMultiProvider(options: CodexMultiOptions) {
+  const models = (options.models ?? DEFAULT_MODELS).map(model => ({ ...model, provider: "codex-multi" })) as Model<"openai-codex-responses">[];
   const transport = options.streamResponses ?? openAICodexResponsesApi().streamSimple, sleep = options.sleep ?? defaultSleep, now = options.now ?? Date.now;
   const streamSimple: StreamFunction<"openai-codex-responses", SimpleStreamOptions> = (model, context, ro) => {
     const out = createAssistantMessageEventStream();
@@ -134,7 +135,7 @@ export function createCodexMultiProvider(options: CodexMultiOptions) {
     })().catch(() => undefined);
     return out;
   };
-  return (pi: ExtensionAPI) => pi.registerProvider("codex-multi", { api: "openai-codex-responses", baseUrl: MODELS[0]?.baseUrl, apiKey: "codex-multi-resolver", models: MODELS, streamSimple: streamSimple as any });
+  return (pi: ExtensionAPI) => pi.registerProvider("codex-multi", { api: "openai-codex-responses", baseUrl: models[0]?.baseUrl, apiKey: "codex-multi-resolver", models, streamSimple: streamSimple as any });
 }
 
 export const defaultAccountStore = new AccountStore();

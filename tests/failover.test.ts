@@ -3,10 +3,13 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AccountStore, StoreCommitUncertainError, type Account } from "../src/accounts/store.js";
-import { createCodexMultiProvider, retryAfter, type CodexAccount } from "../src/provider.js";
-    import { createAccountResolver } from "../src/accounts/selector.js";
+import { createCodexMultiProvider as createProvider, retryAfter, type CodexAccount, type CodexMultiOptions } from "../src/provider.js";
+import { createAccountResolver } from "../src/accounts/selector.js";
 import { TokenManager, TokenManagerError } from "../src/auth/token-manager.js";
 function jwt(claims: object) { const part = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url"); return `${part}.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.${part}`; }
+
+const testModel = { id: "gpt-5.3-codex-spark", provider: "openai-codex", api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api/codex", name: "Codex test", reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 128000 } as any;
+function createCodexMultiProvider(options: CodexMultiOptions) { return createProvider({ ...options, models: [testModel] }); }
 
 async function setup(streamResponses: any, resolveAccount: any, options: any = {}) {
   const registerProvider = vi.fn();

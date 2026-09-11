@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { AccountStore } from "../src/accounts/store.js";
 
 assert.ok("Bun" in globalThis, "smoke must run in Pi's embedded Bun runtime");
+const installedEntry = await import("../src/index.js");
+assert.equal(typeof installedEntry.default, "function", "extension entrypoint must load without private pi-ai subpath imports");
 
 const root = await mkdtemp(join(tmpdir(), "pi-multi-auth-bun-store-"));
 const path = join(root, "nested", "accounts.json");

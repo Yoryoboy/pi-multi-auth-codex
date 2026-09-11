@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createCodexMultiProvider, type CodexAccount } from "../src/provider.js";
+import { createCodexMultiProvider as createProvider, type CodexAccount, type CodexMultiOptions } from "../src/provider.js";
+
+const modelIds = ["gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra"];
+const models = modelIds.map(id => ({ id, provider: "openai-codex", api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api/codex", name: id, reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 128000, thinkingLevelMap: id === "gpt-5.6-sol" ? { xhigh: "xhigh", max: "max", minimal: "low" } : undefined })) as any;
+function createCodexMultiProvider(options: CodexMultiOptions) { return createProvider({ ...options, models }); }
 
 describe("codex-multi provider", () => {
   it("registers every package-supported Codex subscription model without resolving credentials", () => {
