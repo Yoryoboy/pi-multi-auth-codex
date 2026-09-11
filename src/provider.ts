@@ -1,5 +1,6 @@
 import { createAssistantMessageEventStream, openAICodexResponsesApi, type Api, type AssistantMessageEvent, type Model, type SimpleStreamOptions, type StreamFunction } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { OPENAI_CODEX_MODELS } from "@earendil-works/pi-ai/providers/openai-codex.models";
 import { AccountStore, StoreCommitUncertainError } from "./accounts/store.js";
 import { AccountSelectionError } from "./accounts/selector.js";
 import { TokenManager, TokenManagerError } from "./auth/token-manager.js";
@@ -10,9 +11,13 @@ export type AccountResolver = (signal?: AbortSignal, modelId?: string, excludeAc
 export type ResponsesStreamer = StreamFunction<Api, SimpleStreamOptions>;
 export interface CodexMultiOptions { resolveAccount: AccountResolver; streamResponses?: ResponsesStreamer; store?: AccountStore; sleep?: (ms: number, signal?: AbortSignal) => Promise<void>; now?: () => number; }
 
-const MODEL: Model<"openai-codex-responses"> = { id: "gpt-5.6-sol", name: "GPT-5.6 Sol (Codex Multi)", api: "openai-codex-responses", provider: "codex-multi", baseUrl: "https://chatgpt.com/backend-api", reasoning: true, thinkingLevelMap: { off: "none", minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" }, input: ["text", "image"], cost: { input: 4, output: 20, cacheRead: .4, cacheWrite: 5 }, contextWindow: 1_050_000, maxTokens: 128_000 };
-function safeError(message: string, aborted = false): AssistantMessageEvent { return { type: "error", reason: aborted ? "aborted" : "error", error: { role: "assistant", content: [], api: "openai-codex-responses", provider: "codex-multi", model: MODEL.id, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: aborted ? "aborted" : "error", errorMessage: message, timestamp: Date.now() } } as AssistantMessageEvent; }
-function aborted(signal?: AbortSignal) { return signal?.aborted ? safeError("codex-multi request was aborted", true) : undefined; }
+const MODELS: Model<"openai-codex-responses">[] = Object.values(OPENAI_CODEX_MODELS).map(model => ({ ...model, provider: "codex-multi" }));
+const DEFAULT_MODEL_ID = MODELS[0]?.id ?? "gpt-5.6-sol";
+function safeError(message: string, aborted = false, modelId = DEFAULT_MODEL_ID): AssistantMessageEvent { return { type: "error", reason: aborted ? "aborted" : "error", error: { role: "assistant", content: [], api: "openai-codex-responses", provider: "codex-multi", model: modelId, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: aborted ? "aborted" : "error", errorMessage: message, timestamp: Date.now() } } as AssistantMessageEvent; }
+function cooldownDeadline(account: CodexAccount & { rateLimitedUntil?: number | null; rateLimitedUntilByModel?: Record<string, number> }, modelId: string, now: number, delay: number) {
+  return Math.max(account.rateLimitedUntil ?? 0, account.rateLimitedUntilByModel?.[modelId] ?? 0, account.rateLimitedUntilByModel?.["*"] ?? 0, now + delay);
+}
+function aborted(signal?: AbortSignal, modelId = DEFAULT_MODEL_ID) { return signal?.aborted ? safeError("codex-multi request was aborted", true, modelId) : undefined; }
 function abortError() { return new Error("Request was aborted"); }
 /** Race an operation with cancellation and always detach the abort listener. */
 function raceWithAbort<T>(operation: PromiseLike<T> | T, signal?: AbortSignal): Promise<T> {
@@ -65,18 +70,18 @@ export function createCodexMultiProvider(options: CodexMultiOptions) {
       const end = (e?: AssistantMessageEvent) => { if (ended) return; ended = true; if (e) out.push(e); out.end(); };
       try {
         for (let n = 0; n < 100; n++) {
-          const ae = aborted(ro?.signal); if (ae) { end(ae); return; }
+          const ae = aborted(ro?.signal, model.id); if (ae) { end(ae); return; }
           let a: CodexAccount | undefined;
           try {
             a = await raceWithAbort(tried.size ? options.resolveAccount(ro?.signal, model.id, tried) : options.resolveAccount(ro?.signal, model.id), ro?.signal);
           } catch (e) {
-            if (isAbort(e, ro?.signal)) { end(safeError("codex-multi request was aborted", true)); return; }
+            if (isAbort(e, ro?.signal)) { end(safeError("codex-multi request was aborted", true, model.id)); return; }
             if (!retryRefresh(e) || !(e instanceof TokenManagerError) || !e.accountKey) throw e;
             tried.add(e.accountKey); cats.push("refresh"); continue;
           }
-          const ar = aborted(ro?.signal); if (ar) { end(ar); return; }
-          if (!valid(a)) { end(tried.size ? safeError(`codex-multi exhausted ${tried.size} account attempts (${cats.join(",") || "unavailable"})`) : safeError("codex-multi is not configured: account resolver returned invalid credentials")); return; }
-          if (tried.has(a.accountKey)) { end(safeError(`codex-multi exhausted ${tried.size} account attempts (${cats.join(",") || "duplicate"})`)); return; }
+          const ar = aborted(ro?.signal, model.id); if (ar) { end(ar); return; }
+          if (!valid(a)) { end(tried.size ? safeError(`codex-multi exhausted ${tried.size} account attempts (${cats.join(",") || "unavailable"})`, false, model.id) : safeError("codex-multi is not configured: account resolver returned invalid credentials", false, model.id)); return; }
+          if (tried.has(a.accountKey)) { end(safeError(`codex-multi exhausted ${tried.size} account attempts (${cats.join(",") || "duplicate"})`, false, model.id)); return; }
           tried.add(a.accountKey);
           let emitted = false, callbackFailed = false, responseHandled = false, status: number | undefined, headers: Record<string, string> = {};
           const buf: AssistantMessageEvent[] = [], caller = ro?.onResponse;
@@ -103,33 +108,33 @@ export function createCodexMultiProvider(options: CodexMultiOptions) {
             }
             const terminal = buf.at(-1), usageLimit = isUsageLimitTerminal(terminal, emitted), can = !emitted && terminal?.type === "error" && ([401, 403, 429].includes(status ?? 0) || usageLimit);
             if (!can) { for (const e of buf) { if (ro?.signal?.aborted) throw abortError(); out.push(e); } end(); return; }
-            if (status === 429 || usageLimit) { cats.push("rate-limited"); const t = now(), d = retryAfter(headers, t); await raceWithAbort(health(options.store, ro?.signal, a.accountKey, a.accessToken, a.refreshToken, (x, z) => ({ ...x, rateLimitedUntil: Math.max(x.rateLimitedUntil ?? 0, z + d) }), t), ro?.signal); await raceWithAbort(sleep(d, ro?.signal), ro?.signal); }
+            if (status === 429 || usageLimit) { cats.push("rate-limited"); const t = now(), d = retryAfter(headers, t); await raceWithAbort(health(options.store, ro?.signal, a.accountKey, a.accessToken, a.refreshToken, (x, z) => ({ ...x, rateLimitedUntilByModel: { ...(x.rateLimitedUntilByModel ?? {}), [model.id]: cooldownDeadline(x, model.id, z, d) } }), t), ro?.signal); await raceWithAbort(sleep(d, ro?.signal), ro?.signal); }
             else { cats.push("auth"); await raceWithAbort(health(options.store, ro?.signal, a.accountKey, a.accessToken, a.refreshToken, (x, z) => ({ ...x, authInvalidAt: z }), now()), ro?.signal); }
             continue;
           } catch (e) {
             close();
             if (e instanceof StoreCommitUncertainError) throw e;
-            if (isAbort(e, ro?.signal)) { end(safeError("codex-multi request was aborted", true)); return; }
-            if (callbackFailed) { end(safeError("codex-multi request failed")); return; }
+            if (isAbort(e, ro?.signal)) { end(safeError("codex-multi request was aborted", true, model.id)); return; }
+            if (callbackFailed) { end(safeError("codex-multi request failed", false, model.id)); return; }
             const usageLimit = isUsageLimitTerminal(buf.at(-1), emitted), can = !emitted && (status === 401 || status === 403 || status === 429 || usageLimit || retryRefresh(e));
-            if (!can) { for (const x of buf) out.push(x); end(buf.at(-1)?.type === "error" ? undefined : safeError("codex-multi request failed")); return; }
-            if (status === 429 || usageLimit) { cats.push("rate-limited"); const t = now(), d = retryAfter(headers, t); await raceWithAbort(health(options.store, ro?.signal, a.accountKey, a.accessToken, a.refreshToken, (x, z) => ({ ...x, rateLimitedUntil: Math.max(x.rateLimitedUntil ?? 0, z + d) }), t), ro?.signal); await raceWithAbort(sleep(d, ro?.signal), ro?.signal); }
+            if (!can) { for (const x of buf) out.push(x); end(buf.at(-1)?.type === "error" ? undefined : safeError("codex-multi request failed", false, model.id)); return; }
+            if (status === 429 || usageLimit) { cats.push("rate-limited"); const t = now(), d = retryAfter(headers, t); await raceWithAbort(health(options.store, ro?.signal, a.accountKey, a.accessToken, a.refreshToken, (x, z) => ({ ...x, rateLimitedUntilByModel: { ...(x.rateLimitedUntilByModel ?? {}), [model.id]: cooldownDeadline(x, model.id, z, d) } }), t), ro?.signal); await raceWithAbort(sleep(d, ro?.signal), ro?.signal); }
             else if (status === 401 || status === 403) { cats.push("auth"); await raceWithAbort(health(options.store, ro?.signal, a.accountKey, a.accessToken, a.refreshToken, (x, z) => ({ ...x, authInvalidAt: z }), now()), ro?.signal); }
             else cats.push("refresh");
             continue;
           }
         }
-        end(safeError(`codex-multi exhausted ${tried.size} account attempts (${cats.join(",") || "unavailable"})`));
+        end(safeError(`codex-multi exhausted ${tried.size} account attempts (${cats.join(",") || "unavailable"})`, false, model.id));
       } catch (e) {
-        if (isAbort(e, ro?.signal)) end(safeError("codex-multi request was aborted", true));
-        else if (e instanceof AccountSelectionError && (e.code === "EMPTY_ACCOUNT_STORE" || e.code === "ALL_ACCOUNTS_UNAVAILABLE")) end(tried.size ? safeError(`codex-multi exhausted ${tried.size} account attempts (${cats.join(",") || "unavailable"})`) : safeError(e.message));
-        else if (e instanceof StoreCommitUncertainError) end(safeError("codex-multi account health update is uncertain; request was not retried"));
-        else end(safeError("codex-multi request failed"));
+        if (isAbort(e, ro?.signal)) end(safeError("codex-multi request was aborted", true, model.id));
+        else if (e instanceof AccountSelectionError && (e.code === "EMPTY_ACCOUNT_STORE" || e.code === "ALL_ACCOUNTS_UNAVAILABLE")) end(tried.size ? safeError(`codex-multi exhausted ${tried.size} account attempts (${cats.join(",") || "unavailable"})`, false, model.id) : safeError(e.message, false, model.id));
+        else if (e instanceof StoreCommitUncertainError) end(safeError("codex-multi account health update is uncertain; request was not retried", false, model.id));
+        else end(safeError("codex-multi request failed", false, model.id));
       }
     })().catch(() => undefined);
     return out;
   };
-  return (pi: ExtensionAPI) => pi.registerProvider("codex-multi", { api: "openai-codex-responses", baseUrl: MODEL.baseUrl, apiKey: "codex-multi-resolver", models: [MODEL], streamSimple: streamSimple as any });
+  return (pi: ExtensionAPI) => pi.registerProvider("codex-multi", { api: "openai-codex-responses", baseUrl: MODELS[0]?.baseUrl, apiKey: "codex-multi-resolver", models: MODELS, streamSimple: streamSimple as any });
 }
 
 export const defaultAccountStore = new AccountStore();

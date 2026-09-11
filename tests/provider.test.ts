@@ -2,14 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 import { createCodexMultiProvider, type CodexAccount } from "../src/provider.js";
 
 describe("codex-multi provider", () => {
-  it("registers gpt-5.6-sol without resolving credentials", () => {
+  it("registers every package-supported Codex subscription model without resolving credentials", () => {
     const registerProvider = vi.fn();
     createCodexMultiProvider({ resolveAccount: vi.fn() })({ registerProvider } as never);
 
     expect(registerProvider).toHaveBeenCalledOnce();
     const [name, definition] = registerProvider.mock.calls[0];
     expect(name).toBe("codex-multi");
-    expect(definition.models.map((model: { id: string }) => model.id)).toEqual(["gpt-5.6-sol"]);
+    expect(definition.models.map((model: { id: string }) => model.id)).toEqual([
+          "gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5",
+          "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra",
+        ]);
   });
 
   it("registers the provider thinking-level wire mapping", () => {
@@ -17,14 +20,10 @@ describe("codex-multi provider", () => {
     createCodexMultiProvider({ resolveAccount: vi.fn() })({ registerProvider } as never);
 
     const definition = registerProvider.mock.calls[0][1];
-    expect(definition.models[0].thinkingLevelMap).toEqual({
-      off: "none",
-      minimal: null,
-      low: "low",
-      medium: "medium",
-      high: "high",
+    expect(definition.models.find((model: { id: string }) => model.id === "gpt-5.6-sol").thinkingLevelMap).toEqual({
       xhigh: "xhigh",
       max: "max",
+      minimal: "low",
     });
   });
 
@@ -36,7 +35,7 @@ describe("codex-multi provider", () => {
     createCodexMultiProvider({ resolveAccount, streamResponses })({ registerProvider } as never);
 
     const definition = registerProvider.mock.calls[0][1];
-    const model = definition.models[0];
+    const model = definition.models.find((candidate: { id: string }) => candidate.id === "gpt-5.6-sol");
     const context = { messages: [] };
     const options = { signal: new AbortController().signal };
     const result = definition.streamSimple(model, context, options);
@@ -100,7 +99,18 @@ describe("codex-multi provider", () => {
         expect(JSON.stringify(events)).not.toMatch(/partial-(access|account|key|refresh)/);
       });
 
-      it("reports missing credentials as a configuration error", async () => {
+      it("preserves the selected model on synthetic errors", async () => {
+    const registerProvider = vi.fn();
+    createCodexMultiProvider({ resolveAccount: vi.fn().mockResolvedValue(undefined) })({ registerProvider } as never);
+    const definition = registerProvider.mock.calls[0][1];
+    const model = definition.models.find((candidate: { id: string }) => candidate.id === "gpt-5.4");
+    const events: any[] = [];
+    for await (const event of definition.streamSimple(model, { messages: [] }, {})) events.push(event);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "error", error: { model: "gpt-5.4" } });
+  });
+
+  it("reports missing credentials as a configuration error", async () => {
     const registerProvider = vi.fn();
     createCodexMultiProvider({ resolveAccount: vi.fn().mockResolvedValue(undefined) })({ registerProvider } as never);
     const definition = registerProvider.mock.calls[0][1];

@@ -44,7 +44,7 @@ describe("provider account failover", () => {
       yield { type: "start", partial: {} }; yield { type: "text_delta", contentIndex: 0, delta: "ok", partial: { type: "text", text: "ok" } }; yield { type: "done", reason: "stop", message: {} };
     });
     const events = await eventsOf(await setup(transport, resolve, { store, now: () => 5_000, sleep }));
-    expect((await store.load()).accounts.find(x => x.id === "a")?.rateLimitedUntil).toBe(10_000);
+    expect((await store.load()).accounts.find(x => x.id === "a")?.rateLimitedUntilByModel?.["gpt-5.3-codex-spark"]).toBe(10_000);
     expect(sleep).toHaveBeenCalledOnce(); expect(sleep).toHaveBeenCalledWith(5_000, undefined);
     expect(attempts).toEqual([a.accessToken, b.accessToken]); expect(transport).toHaveBeenCalledTimes(2);
     expect(events.map(e => e.type)).toEqual(["start", "text_delta", "done"]);
@@ -122,10 +122,10 @@ describe("provider account failover", () => {
   });
 
   it.each([["integer", "7", 7_000], ["date", "Thu, 01 Jan 1970 00:00:12 GMT", 7_000], ["missing", undefined, 5_000], ["invalid", "nonsense", 5_000], ["below-min", "0", 1_000], ["above-max", "999", 60_000]])("1: Retry-After %s uses conservative deadline", async (_label, retry, delay) => {
-    const store = await healthStore([storedAccount("a", { rateLimitedUntil: 20_000 })]);
+    const store = await healthStore([storedAccount("a", { rateLimitedUntil: null })]);
     const transport = vi.fn().mockImplementation(async function* (_m: unknown, _c: unknown, o: any) { await o.onResponse({ status: 429, headers: retry === undefined ? {} : { "retry-after": retry } }, {}); yield { type: "start", partial: {} }; yield { type: "error", reason: "error", error: {} }; });
     await eventsOf(await setup(transport, vi.fn().mockResolvedValue(account("a")), { store, now: () => 5_000, sleep: async () => undefined }));
-    expect((await store.load()).accounts[0].rateLimitedUntil).toBe(Math.max(20_000, 5_000 + delay));
+    expect((await store.load()).accounts[0].rateLimitedUntilByModel?.["gpt-5.3-codex-spark"]).toBe(5_000 + delay);
   });
 
   it.each([401, 403])("2: CAS-invalidates observed credentials on %s only", async (status) => {
@@ -261,12 +261,12 @@ describe("provider account failover", () => {
   });
 
   it.each([["seconds", { "Retry-After": "7" }, 7_000], ["HTTP date", { "retry-after": "Thu, 01 Jan 1970 00:00:12 GMT" }, 7_000], ["missing", {}, 5_000], ["invalid", { "RETRY-AFTER": "nonsense" }, 5_000], ["below-min", { "retry-after": "0.1" }, 1_000], ["zero", { "retry-after": "0" }, 1_000], ["negative", { "retry-after": "-2" }, 1_000], ["above-max", { "retry-after": "999" }, 60_000]])("F: Retry-After %s directly sets a fresh account deadline", async (_label, headers, delay) => {
-            const store = await healthStore([storedAccount("fresh", { rateLimitedUntil: null })]); const transport = vi.fn().mockImplementation(async function* (_m: unknown, _c: unknown, o: any) { await o.onResponse({ status: 429, headers }, {}); yield { type: "start", partial: {} }; yield { type: "error", reason: "error", error: {} }; }); await eventsOf(await setup(transport, vi.fn().mockResolvedValue(account("fresh")), { store, now: () => 5_000, sleep: async () => undefined })); expect((await store.load()).accounts[0].rateLimitedUntil).toBe(5_000 + delay);
+            const store = await healthStore([storedAccount("fresh", { rateLimitedUntil: null })]); const transport = vi.fn().mockImplementation(async function* (_m: unknown, _c: unknown, o: any) { await o.onResponse({ status: 429, headers }, {}); yield { type: "start", partial: {} }; yield { type: "error", reason: "error", error: {} }; }); await eventsOf(await setup(transport, vi.fn().mockResolvedValue(account("fresh")), { store, now: () => 5_000, sleep: async () => undefined })); expect((await store.load()).accounts[0].rateLimitedUntilByModel?.["gpt-5.3-codex-spark"]).toBe(5_000 + delay);
           });
       it("F: fractional numeric policy is seconds with millisecond precision", () => { expect(retryAfter({ "retry-after": "1.25" }, 5_000)).toBe(1_250); });
 
       it("F: preserves a later deadline and extends an earlier deadline", async () => {
-        const run = async (existing: number | null) => { const store = await healthStore([storedAccount("fresh", { rateLimitedUntil: existing })]); const transport = vi.fn().mockImplementation(async function* (_m: unknown, _c: unknown, o: any) { await o.onResponse({ status: 429, headers: { "retry-after": "7" } }, {}); yield { type: "start", partial: {} }; yield { type: "error", reason: "error", error: {} }; }); await eventsOf(await setup(transport, vi.fn().mockResolvedValue(account("fresh")), { store, now: () => 5_000, sleep: async () => undefined })); return (await store.load()).accounts[0].rateLimitedUntil; };
+        const run = async (existing: number | null) => { const store = await healthStore([storedAccount("fresh", { rateLimitedUntil: existing })]); const transport = vi.fn().mockImplementation(async function* (_m: unknown, _c: unknown, o: any) { await o.onResponse({ status: 429, headers: { "retry-after": "7" } }, {}); yield { type: "start", partial: {} }; yield { type: "error", reason: "error", error: {} }; }); await eventsOf(await setup(transport, vi.fn().mockResolvedValue(account("fresh")), { store, now: () => 5_000, sleep: async () => undefined })); return (await store.load()).accounts[0].rateLimitedUntilByModel?.["gpt-5.3-codex-spark"]; };
         await expect(run(20_000)).resolves.toBe(20_000); await expect(run(1_000)).resolves.toBe(12_000);
       });
 

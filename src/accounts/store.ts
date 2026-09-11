@@ -20,6 +20,8 @@ export interface Account {
   lastUsed: number | null;
   rateLimitedUntil: number | null;
   authInvalidAt: number | null;
+  /** Per-model rate-limit deadlines. Legacy rateLimitedUntil remains supported as a global fallback. */
+  rateLimitedUntilByModel?: Record<string, number>;
 }
 
 export interface Store {
@@ -65,7 +67,7 @@ function validateAccount(value: unknown): asserts value is Account {
   const account = value as Record<string, unknown>;
   const allowedKeys = new Set([
     "alias", "id", "accessToken", "refreshToken", "idToken", "email", "planType",
-    "accountId", "expiresAt", "enabled", "usageCount", "lastUsed", "rateLimitedUntil", "authInvalidAt",
+    "accountId", "expiresAt", "enabled", "usageCount", "lastUsed", "rateLimitedUntil", "authInvalidAt", "rateLimitedUntilByModel",
   ]);
   if (Object.keys(account).some((key) => !allowedKeys.has(key))) throw invalidStore();
   const requiredStrings = ["alias", "id", "accessToken", "refreshToken", "accountId"];
@@ -76,6 +78,11 @@ function validateAccount(value: unknown): asserts value is Account {
   if (typeof account.expiresAt !== "number" || !Number.isFinite(account.expiresAt) || account.expiresAt < 0) throw invalidStore();
   if (typeof account.enabled !== "boolean" || typeof account.usageCount !== "number" || !Number.isInteger(account.usageCount) || account.usageCount < 0) throw invalidStore();
   if (!isTimestamp(account.lastUsed) || !isTimestamp(account.rateLimitedUntil) || !isTimestamp(account.authInvalidAt)) throw invalidStore();
+     if ("rateLimitedUntilByModel" in account) {
+       const deadlines = account.rateLimitedUntilByModel;
+       if (!deadlines || typeof deadlines !== "object" || Array.isArray(deadlines)
+         || Object.entries(deadlines).some(([modelId, deadline]) => modelId === "" || !isTimestamp(deadline) || deadline === null)) throw invalidStore();
+     }
 }
 
 function validateStore(value: unknown): asserts value is Store {

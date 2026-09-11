@@ -14,16 +14,16 @@ Restart Pi, then:
 
 1. Run `/codex-accounts`.
 2. Choose **Add account** and complete the sign-in flow for each account you are authorized to use.
-3. Open `/model` and choose `codex-multi/gpt-5.6-sol`.
+3. Open `/model` and select any Codex model exposed by the installed matching `pi-ai` catalog.
 4. Press `Ctrl+S` if you want to save the model selection.
 
-There is no per-account model configuration. All configured accounts use the one `codex-multi/gpt-5.6-sol` provider model.
+The `codex-multi` provider exposes all Codex models supported by the installed matching `pi-ai` catalog. Cooldowns and failover are model-aware, so account rotation remains scoped to the selected model. This extension does not discover or create subscription entitlements and does not query the public `/v1/models` endpoint.
 
 ## What it does
 
 - Rotates accounts globally across Pi processes using a locked shared store and cross-process round-robin state.
 - Refreshes OAuth access tokens when they expire.
-- Marks accounts temporarily unavailable after authentication failures or quota/rate-limit responses, then fails over to another available account.
+- Marks accounts unavailable after authentication failures, and applies quota/rate-limit cooldowns to the affected account/model combination before failing over.
 - Provides `/codex-accounts` to add, reauthenticate, enable, disable, remove, refresh, and inspect the store path for accounts.
 
 ### Thinking levels

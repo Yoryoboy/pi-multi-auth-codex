@@ -80,7 +80,8 @@ export async function reauthenticateAccount(store: AccountStore, id: string, tok
       if (!found) throw new Error("Account no longer exists");
       if (found.accountId !== identity.accountId) throw new Error("OAuth identity does not match the selected account");
       if (found.id !== id || found.accountId !== expected.accountId || found.accessToken !== expected.accessToken || found.refreshToken !== expected.refreshToken) throw new ReauthenticationConflictError();
-      account = { ...found, accessToken: tokens.access_token, refreshToken: tokens.refresh_token ?? found.refreshToken, idToken: tokens.id_token ?? found.idToken, email: identity.email ?? found.email, planType: identity.planType ?? found.planType, expiresAt: identity.expiresAt, authInvalidAt: null, rateLimitedUntil: null };
+      const { rateLimitedUntilByModel: _staleCooldowns, ...withoutModelCooldown } = found;
+      account = { ...withoutModelCooldown, accessToken: tokens.access_token, refreshToken: tokens.refresh_token ?? found.refreshToken, idToken: tokens.id_token ?? found.idToken, email: identity.email ?? found.email, planType: identity.planType ?? found.planType, expiresAt: identity.expiresAt, authInvalidAt: null, rateLimitedUntil: null };
       return { ...current, accounts: current.accounts.map(value => value.id === id ? account : value) };
     });
     return { account };

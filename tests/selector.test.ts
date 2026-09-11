@@ -150,6 +150,17 @@ describe("account selector", () => {
     });
   });
 
+  it("uses the later global cooldown when it conflicts with a model cooldown", async () => {
+    const store = await seed(await storePath(), [account("a", { rateLimitedUntil: 3_000, rateLimitedUntilByModel: { "gpt-5.4": 2_000 } }), account("b")]);
+    expect((await selectAccount(store, { modelId: "gpt-5.4", now: 2_500 })).accountId).toBe("account-b");
+  });
+
+  it("does not let one model cooldown block another model", async () => {
+    const store = await seed(await storePath(), [account("a", { rateLimitedUntilByModel: { "gpt-5.4": 2_000 } }), account("b")]);
+    expect((await selectAccount(store, { modelId: "gpt-5.4", now: 1_000 })).accountId).toBe("account-b");
+    expect((await selectAccount(store, { modelId: "gpt-5.5", now: 1_000 })).accountId).toBe("account-a");
+  });
+
   it("forwards request exclusions without mutating the excluded account", async () => {
         const store = await seed(await storePath(), [account("a"), account("b")]);
         const resolver = createAccountResolver(store);
