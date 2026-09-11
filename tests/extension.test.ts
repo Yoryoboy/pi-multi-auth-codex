@@ -1,0 +1,44 @@
+import { describe, expect, it, vi } from "vitest";
+import extension from "../src/index.js";
+import { runAccountManager } from "../src/ui/account-manager.js";
+
+function piHarness() { const handlers: any = {}; const events: any = {}; return { handlers, events, pi: { registerProvider: vi.fn(), registerCommand: vi.fn((name: string, command: any) => { handlers[name] = command.handler; }), on: vi.fn((event: string, listener: any) => { events[event] = listener; }) } as any }; }
+function ctx(mode: string, hasUI = true) { return { mode, hasUI, ui: { notify: vi.fn(), setStatus: vi.fn(), theme: { fg: (_: string, value: string) => value } } }; }
+function deferred<T = void>() { let resolve!: (value: T) => void; let reject!: (error: unknown) => void; const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; }
+
+function pendingOAuth() {
+  const cleanup = deferred<void>();
+  const operation: any = new Promise((_resolve, reject) => { cleanup.promise.then(() => reject(Object.assign(new Error("aborted"), { code: "OAUTH_ABORTED" }))); });
+  operation.ready = Promise.resolve({ url: "https://auth.example.test", state: "state", redirectUri: "http://localhost", port: 1455, pkce: { verifier: "v", challenge: "c" } });
+  operation.getFlow = () => undefined;
+  return { operation, cleanup };
+}
+
+describe("Pi extension registration", () => {
+  it("registers provider, lifecycle hooks, and account command without OAuth", () => { const h = piHarness(); extension(h.pi); expect(h.handlers["codex-accounts"]).toBeTypeOf("function"); expect(h.events.session_start).toBeTypeOf("function"); expect(h.events.session_shutdown).toBeTypeOf("function"); expect(h.pi.registerProvider).toHaveBeenCalledWith("codex-multi", expect.any(Object)); });
+  it.each(["rpc", "json", "print"])("does not start account operations in %s mode", async mode => { const h = piHarness(); const run = vi.fn(); const createStore = vi.fn(() => ({ load: vi.fn(), path: "test", mutate: vi.fn() })); extension(h.pi, { createStore: createStore as any, runAccountManager: run as any }); const c = ctx(mode); await h.handlers["codex-accounts"]([], c); expect(run).not.toHaveBeenCalled(); expect(createStore).not.toHaveBeenCalled(); expect(c.ui.notify).toHaveBeenCalled(); });
+  it("does not start operations when UI is unavailable", async () => { const h = piHarness(); const run = vi.fn(); const c = ctx("tui", false); extension(h.pi, { runAccountManager: run as any }); await h.handlers["codex-accounts"]([], c); expect(run).not.toHaveBeenCalled(); expect(c.ui.notify).toHaveBeenCalled(); });
+  it("prevents an old status load from writing after shutdown and replacement start", async () => { const h = piHarness(); let resolveOld!: (value: any) => void; let resolveNew!: (value: any) => void; const stores = [{ load: () => new Promise(r => { resolveOld = r; }) }, { load: () => new Promise(r => { resolveNew = r; }) }]; const createStore = vi.fn(() => stores.shift()!); extension(h.pi, { createStore: createStore as any }); const c = ctx("tui"); const first = h.events.session_start({}, c); await Promise.resolve(); await h.events.session_shutdown({}, c); const second = h.events.session_start({}, c); await vi.waitFor(() => expect(createStore).toHaveBeenCalledTimes(2)); resolveNew({ accounts: [] }); await second; resolveOld({ accounts: [{ enabled: true, rateLimitedUntil: null, authInvalidAt: null, expiresAt: Date.now() + 10000 }] }); await first; expect(c.ui.setStatus).toHaveBeenCalledWith("codex-accounts", undefined); expect(c.ui.setStatus.mock.calls.filter((call: any[]) => call[1] !== undefined)).toHaveLength(1); });
+
+  it.each([["add", "quit"], ["add", "reload"], ["reauth", "quit"], ["reauth", "reload"]])("stops pending %s OAuth on %s without mutation or late effects", async (kind, reason) => {
+    const h = piHarness(); const c: any = ctx("tui");
+    const store = { load: vi.fn().mockResolvedValue({ version: 2, accounts: kind === "reauth" ? [{ alias: "work", id: "work-id", accountId: "provider-id", accessToken: "old-access", refreshToken: "old-refresh", expiresAt: 9999999999999, enabled: true, usageCount: 0, lastUsed: null, rateLimitedUntil: null, authInvalidAt: null } ] : [], lastSelectedAccountId: null }), mutate: vi.fn(), path: "test" };
+    const oauth = pendingOAuth(); let component: any; let doneCalled = false;
+    let menu = 0;
+    c.ui.select = vi.fn().mockImplementation(async (title: string) => title === "Codex accounts" ? (menu++ === 0 ? (kind === "add" ? "Add account" : "  work | [redacted email] | enabled | available") : "Close") : "Reauthenticate");
+    c.ui.input = vi.fn().mockResolvedValue("new-work"); c.ui.confirm = vi.fn();
+    c.ui.custom = vi.fn((factory: any) => new Promise(resolve => { component = factory({ requestRender: vi.fn() }, c.ui.theme, { matches: () => false }, (value: any) => { doneCalled = true; resolve(value); }); }));
+    const login = vi.fn().mockReturnValue(oauth.operation);
+    extension(h.pi, { createStore: () => store as any, openBrowser: vi.fn().mockResolvedValue(undefined), runAccountManager: (deps: any) => runAccountManager({ ...deps, login }) });
+    await h.events.session_start({}, c);
+    const command = h.handlers["codex-accounts"]([], c);
+    await vi.waitFor(() => expect(login).toHaveBeenCalled());
+    const shutdown = h.events.session_shutdown({ reason }, c);
+    expect(oauth.operation).toBeDefined();
+    expect((login.mock.calls[0][1] as any).signal.aborted).toBe(true);
+    let completed = false; void shutdown.then(() => { completed = true; }); await Promise.resolve(); expect(completed).toBe(false);
+    expect(store.mutate).not.toHaveBeenCalled(); expect(doneCalled).toBe(false); expect(component).toBeDefined();
+    oauth.cleanup.resolve(); await shutdown; await command;
+    expect(completed).toBe(true); expect(store.mutate).not.toHaveBeenCalled(); expect(c.ui.notify).not.toHaveBeenCalled();
+  });
+});

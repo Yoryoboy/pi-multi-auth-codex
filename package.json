@@ -1,0 +1,28 @@
+{
+  "name": "pi-extension-codex-multi",
+  "version": "0.1.0",
+  "description": "Phase 0 Codex multi-account transport spike for Pi",
+  "type": "module",
+  "private": false,
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "test:bun": "pi -e ./tests/bun-store-smoke.ts --list-models"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "proper-lockfile": "^4.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.19",
+    "@types/proper-lockfile": "^4.1.4",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
+  }
+}
