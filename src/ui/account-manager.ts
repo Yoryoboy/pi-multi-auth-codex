@@ -3,6 +3,8 @@ import { upsertOAuthAccount } from "../auth/upsert.js";
 import { loginAccount, type LoginOperation, type LoginOptions } from "../auth/oauth.js";
 import { accountStatus, maskEmail, reauthenticateAccount, removeAccount, renderAccount, setAccountEnabled, validateAlias } from "../accounts/manage.js";
 import type { BrowserOpener } from "./browser.js";
+    import { fetchAllQuotas, formatQuotaSummary } from "../accounts/quota.js";
+    import type { FetchLike } from "../auth/oauth.js";
 
 export interface AccountManagerUI {
   select(title: string, options: string[]): Promise<string | undefined>;
@@ -18,6 +20,7 @@ export interface AccountManagerDeps {
   login?: (alias: string, options?: LoginOptions) => LoginOperation;
   now?: () => number;
   trackOAuth?: (controller: AbortController, operation: LoginOperation) => () => void;
+      fetch?: FetchLike;
 }
 
 function safeError(error: unknown): string {
@@ -46,9 +49,10 @@ export async function runAccountManager(deps: AccountManagerDeps): Promise<void>
   while (true) {
     const store = await deps.store.load();
     const rows = store.accounts.map(account => renderAccount(account, store, deps.now?.() ?? Date.now()));
-    const choice = await deps.ui.select("Codex accounts", ["Add account", ...rows, "Refresh", "Show store path", "Close"]);
+    const choice = await deps.ui.select("Codex accounts", ["Add account", ...rows, "View all limits", "Refresh", "Show store path", "Close"]);
     if (choice === undefined || choice === "Close") return;
-    if (choice === "Refresh") continue;
+    if (choice === "View all limits") { const quotas = await fetchAllQuotas(store.accounts, { store: deps.store, fetch: deps.fetch, now: deps.now }); deps.ui.notify(formatQuotaSummary(quotas), "info"); continue; }
+        if (choice === "Refresh") continue;
     if (choice === "Show store path") { deps.ui.notify(`Account store: ${deps.store.path}`, "info"); continue; }
     if (choice === "Add account") { await addAccount(deps, login); continue; }
     const index = rows.indexOf(choice);

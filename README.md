@@ -24,7 +24,7 @@ The `codex-multi` provider exposes all Codex models supported by the installed m
 - Rotates accounts globally across Pi processes using a locked shared store and cross-process round-robin state.
 - Refreshes OAuth access tokens when they expire.
 - Marks accounts unavailable after authentication failures, and applies quota/rate-limit cooldowns to the affected account/model combination before failing over.
-- Provides `/codex-accounts` to add, reauthenticate, enable, disable, remove, refresh, and inspect the store path for accounts.
+- Provides `/codex-accounts` to add, reauthenticate, enable, disable, remove, refresh, inspect the store path, and view a one-time summary of all accounts' 5-hour and weekly limits.
 
 ## Account store and security
 
