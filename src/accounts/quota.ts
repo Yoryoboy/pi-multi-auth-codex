@@ -4,17 +4,270 @@ import type { FetchLike } from "../auth/oauth.js";
 export const QUOTA_URL = "https://chatgpt.com/backend-api/wham/usage";
 export const FIVE_HOUR_SECONDS = 18_000;
 export const WEEK_SECONDS = 604800;
-type Window = { usedPercent: number; remainingPercent: number; resetAfterSeconds: number };
+type Window = {
+  usedPercent: number;
+  remainingPercent: number;
+  resetAfterSeconds: number;
+};
 export type Quota = { fiveHour: Window; weekly: Window };
-export type QuotaResult = { alias: string; status: "ok" | "failed"; quota?: Quota };
-export interface QuotaOptions { fetch?: FetchLike; now?: () => number; concurrency?: number; tokenManager?: TokenManager; store?: AccountStore; signal?: AbortSignal; }
-const number = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : undefined;
-const seconds = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
-function parseWindow(value: unknown, expectedSeconds: number, now: number): Window | undefined { if (!value || typeof value !== "object") return undefined; const row = value as Record<string, unknown>; const duration = row.limit_window_seconds ?? row.limitWindowSeconds; if (duration !== undefined && duration !== expectedSeconds) return undefined; const used = number(row.used_percent ?? row.usedPercent); const resetValue = row.reset_after_seconds ?? row.resetAfterSeconds; const reset = seconds(resetValue) ?? (typeof row.reset_at === "number" && Number.isFinite(row.reset_at) ? Math.max(0, row.reset_at - now / 1000) : undefined); return used === undefined || reset === undefined ? undefined : { usedPercent: used, remainingPercent: 100 - used, resetAfterSeconds: reset }; }
-function parseQuota(value: unknown, now: number): Quota | undefined { if (!value || typeof value !== "object") return undefined; const root = value as Record<string, unknown>; const limits = (root.rate_limit ?? root.rateLimit) as Record<string, unknown> | undefined; const primary = parseWindow(limits?.primary_window ?? limits?.primaryWindow, FIVE_HOUR_SECONDS, now); const secondary = parseWindow(limits?.secondary_window ?? limits?.secondaryWindow, WEEK_SECONDS, now); return primary && secondary ? { fiveHour: primary, weekly: secondary } : undefined; }
-async function one(account: Account, options: QuotaOptions, manager: TokenManager): Promise<QuotaResult> { try { const credentials = await manager.prepareAccount(account.id, options.signal, false, account); const response = await (options.fetch ?? fetch)(QUOTA_URL, { method: "GET", headers: { Authorization: `Bearer ${credentials.accessToken}`, "ChatGPT-Account-Id": credentials.accountId, originator: "codex_cli_rs", accept: "application/json", "User-Agent": "codex-cli" }, signal: options.signal }); if (!response.ok) return { alias: account.alias, status: "failed" }; const quota = parseQuota(await response.json(), options.now?.() ?? Date.now()); return quota ? { alias: account.alias, status: "ok", quota } : { alias: account.alias, status: "failed" }; } catch { return { alias: account.alias, status: "failed" }; } }
-export function formatCompactQuota(result: QuotaResult): string { if (result.status === "failed" || !result.quota) return `${result.alias} · limits unavailable`; return `${result.alias} · 5h ${result.quota.fiveHour.usedPercent}% · wk ${result.quota.weekly.usedPercent}%`; }
-export async function fetchAllQuotas(accounts: readonly Account[], options: QuotaOptions = {}): Promise<QuotaResult[]> { const manager = options.tokenManager ?? (options.store ? new TokenManager(options.store, { fetch: options.fetch, now: options.now }) : { prepareAccount: async (id: string) => { const account = accounts.find(item => item.id === id)!; return { accessToken: account.accessToken, accountId: account.accountId }; } } as TokenManager); const result: QuotaResult[] = []; let next = 0; const worker = async () => { while (true) { const index = next++; if (index >= accounts.length) return; result[index] = await one(accounts[index]!, options, manager); } }; await Promise.all(Array.from({ length: Math.min(2, Math.max(1, options.concurrency ?? 2), accounts.length) }, worker)); return result; }
+export type QuotaResult = {
+  alias: string;
+  status: "ok" | "failed";
+  quota?: Quota;
+};
+export const QUOTA_CACHE_TTL_MS = 120_000;
+type QuotaCacheEntry = { result: QuotaResult; fetchedAt: number };
+export class QuotaCache {
+  private readonly entries = new Map<string, QuotaCacheEntry>();
+
+  get(accountKey: string, now = Date.now()): QuotaResult | undefined {
+    const entry = this.entries.get(accountKey);
+    if (!entry) return undefined;
+    const age = now - entry.fetchedAt;
+    return age >= 0 && age < QUOTA_CACHE_TTL_MS ? entry.result : undefined;
+  }
+
+  set(accountKey: string, result: QuotaResult, fetchedAt = Date.now()): void {
+    this.entries.set(accountKey, { result, fetchedAt });
+  }
+
+  delete(accountKey: string): boolean {
+    return this.entries.delete(accountKey);
+  }
+  clear(): void {
+    this.entries.clear();
+  }
+}
+export interface QuotaOptions {
+  fetch?: FetchLike;
+  now?: () => number;
+  concurrency?: number;
+  tokenManager?: TokenManager;
+  store?: AccountStore;
+  signal?: AbortSignal;
+}
+const number = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.min(100, value))
+    : undefined;
+const seconds = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+function parseWindow(
+  value: unknown,
+  expectedSeconds: number,
+  now: number,
+): Window | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const row = value as Record<string, unknown>;
+  const duration = row.limit_window_seconds ?? row.limitWindowSeconds;
+  if (duration !== undefined && duration !== expectedSeconds) return undefined;
+  const used = number(row.used_percent ?? row.usedPercent);
+  const resetValue = row.reset_after_seconds ?? row.resetAfterSeconds;
+  const reset =
+    seconds(resetValue) ??
+    (typeof row.reset_at === "number" && Number.isFinite(row.reset_at)
+      ? Math.max(0, row.reset_at - now / 1000)
+      : undefined);
+  return used === undefined || reset === undefined
+    ? undefined
+    : {
+        usedPercent: used,
+        remainingPercent: 100 - used,
+        resetAfterSeconds: reset,
+      };
+}
+function parseQuota(value: unknown, now: number): Quota | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const root = value as Record<string, unknown>;
+  const limits = (root.rate_limit ?? root.rateLimit) as
+    | Record<string, unknown>
+    | undefined;
+  const primary = parseWindow(
+    limits?.primary_window ?? limits?.primaryWindow,
+    FIVE_HOUR_SECONDS,
+    now,
+  );
+  const secondary = parseWindow(
+    limits?.secondary_window ?? limits?.secondaryWindow,
+    WEEK_SECONDS,
+    now,
+  );
+  return primary && secondary
+    ? { fiveHour: primary, weekly: secondary }
+    : undefined;
+}
+async function one(
+  account: Account,
+  options: QuotaOptions,
+  manager: TokenManager,
+): Promise<QuotaResult> {
+  try {
+    const credentials = await manager.prepareAccount(
+      account.id,
+      options.signal,
+      false,
+      account,
+    );
+    const response = await (options.fetch ?? fetch)(QUOTA_URL, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${credentials.accessToken}`,
+        "ChatGPT-Account-Id": credentials.accountId,
+        originator: "codex_cli_rs",
+        accept: "application/json",
+        "User-Agent": "codex-cli",
+      },
+      signal: options.signal,
+    });
+    if (!response.ok) return { alias: account.alias, status: "failed" };
+    const quota = parseQuota(
+      await response.json(),
+      options.now?.() ?? Date.now(),
+    );
+    return quota
+      ? { alias: account.alias, status: "ok", quota }
+      : { alias: account.alias, status: "failed" };
+  } catch {
+    return { alias: account.alias, status: "failed" };
+  }
+}
+export function formatCompactQuota(result: QuotaResult): string {
+  if (result.status === "failed" || !result.quota)
+    return `${result.alias} · limits unavailable`;
+  return `${result.alias} · 5h ${result.quota.fiveHour.usedPercent}% · wk ${result.quota.weekly.usedPercent}%`;
+}
+type CompletedQuota = {
+  result: QuotaResult;
+  completedAt: number;
+};
+
+async function fetchQuotaCompletions(
+  accounts: readonly Account[],
+  options: QuotaOptions,
+): Promise<CompletedQuota[]> {
+  const manager =
+    options.tokenManager ??
+    (options.store
+      ? new TokenManager(options.store, {
+          fetch: options.fetch,
+          now: options.now,
+        })
+      : ({
+          prepareAccount: async (id: string) => {
+            const account = accounts.find((item) => item.id === id)!;
+            return {
+              accessToken: account.accessToken,
+              accountId: account.accountId,
+            };
+          },
+        } as TokenManager));
+  const completed: CompletedQuota[] = [];
+  const now = options.now ?? Date.now;
+  let next = 0;
+  const worker = async () => {
+    while (true) {
+      const index = next++;
+      if (index >= accounts.length) return;
+      const result = await one(accounts[index]!, options, manager);
+      completed[index] = {
+        result,
+        completedAt: now(),
+      };
+    }
+  };
+  await Promise.all(
+    Array.from(
+      {
+        length: Math.min(
+          2,
+          Math.max(1, options.concurrency ?? 2),
+          accounts.length,
+        ),
+      },
+      worker,
+    ),
+  );
+  return completed;
+}
+
+export async function fetchAllQuotas(
+  accounts: readonly Account[],
+  options: QuotaOptions = {},
+): Promise<QuotaResult[]> {
+  return (await fetchQuotaCompletions(accounts, options)).map(
+    ({ result }) => result,
+  );
+}
+
+export async function resolveAccountQuotas(
+  accounts: readonly Account[],
+  cache: QuotaCache,
+  options: QuotaOptions = {},
+): Promise<Map<string, QuotaResult>> {
+  const now = options.now ?? Date.now;
+  const results = new Map<string, QuotaResult>();
+  const misses: Account[] = [];
+
+  for (const account of accounts) {
+    const cached = cache.get(account.id, now());
+    if (cached) results.set(account.id, cached);
+    else misses.push(account);
+  }
+
+  const fetched = await fetchQuotaCompletions(misses, options);
+  if (!options.signal?.aborted) {
+    fetched.forEach(({ result, completedAt }, index) => {
+      const accountKey = misses[index]!.id;
+      cache.set(accountKey, result, completedAt);
+      results.set(accountKey, result);
+    });
+  }
+
+  return new Map(
+    accounts.flatMap((account) => {
+      const result = results.get(account.id);
+      return result ? [[account.id, result] as const] : [];
+    }),
+  );
+}
+
 type QuotaFormatOptions = { now?: () => number; timeZone?: string };
-function resetText(resetAfterSeconds: number, options: QuotaFormatOptions): string { const minutes = Math.round(resetAfterSeconds / 60); if (resetAfterSeconds < 3600) return `resets in ${minutes} minute${minutes === 1 ? "" : "s"}`; if (resetAfterSeconds < 86400) { const resetAt = new Date((options.now?.() ?? Date.now()) + resetAfterSeconds * 1000); const clock = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: options.timeZone }).format(resetAt); return `resets at ${clock}`; } const days = Math.floor(resetAfterSeconds / 86400); const hours = Math.floor((resetAfterSeconds % 86400) / 3600); return `resets in ${days}d ${hours}h`; }
-export function formatQuotaSummary(results: readonly QuotaResult[], options: QuotaFormatOptions = {}): string { return ["Codex limits", ...results.map(item => { const quota = item.quota; if (item.status === "failed" || !quota) return `${item.alias}: unavailable`; return `${item.alias}: 5-hour: ${quota.fiveHour.usedPercent}% used (${resetText(quota.fiveHour.resetAfterSeconds, options)}); weekly: ${quota.weekly.usedPercent}% used (${resetText(quota.weekly.resetAfterSeconds, options)})`; })].join("\n"); }
+function resetText(
+  resetAfterSeconds: number,
+  options: QuotaFormatOptions,
+): string {
+  const minutes = Math.round(resetAfterSeconds / 60);
+  if (resetAfterSeconds < 3600)
+    return `resets in ${minutes} minute${minutes === 1 ? "" : "s"}`;
+  if (resetAfterSeconds < 86400) {
+    const resetAt = new Date(
+      (options.now?.() ?? Date.now()) + resetAfterSeconds * 1000,
+    );
+    const clock = new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+      timeZone: options.timeZone,
+    }).format(resetAt);
+    return `resets at ${clock}`;
+  }
+  const days = Math.floor(resetAfterSeconds / 86400);
+  const hours = Math.floor((resetAfterSeconds % 86400) / 3600);
+  return `resets in ${days}d ${hours}h`;
+}
+export function formatQuotaSummary(
+  results: readonly QuotaResult[],
+  options: QuotaFormatOptions = {},
+): string {
+  return [
+    "Codex limits",
+    ...results.map((item) => {
+      const quota = item.quota;
+      if (item.status === "failed" || !quota)
+        return `${item.alias}: unavailable`;
+      return `${item.alias}: 5-hour: ${quota.fiveHour.usedPercent}% used (${resetText(quota.fiveHour.resetAfterSeconds, options)}); weekly: ${quota.weekly.usedPercent}% used (${resetText(quota.weekly.resetAfterSeconds, options)})`;
+    }),
+  ].join("\n");
+}
