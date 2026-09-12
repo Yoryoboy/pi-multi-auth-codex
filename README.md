@@ -26,6 +26,15 @@ The `codex-multi` provider exposes all Codex models supported by the installed m
 - Marks accounts unavailable after authentication failures, and applies quota/rate-limit cooldowns to the affected account/model combination before failing over.
 - Provides `/codex-accounts` to add, reauthenticate, enable, disable, remove, refresh, inspect the store path, and view a one-time summary of all accounts' 5-hour and weekly limits.
 
+## Routing strategy
+
+Use the top-level **Routing strategy** option in `/codex-accounts` to choose how the extension selects an eligible account. The choice is persisted in the shared account store and applies across Pi processes.
+
+- **Round robin** is the default and preserves the existing rotation behavior.
+- **Most available** prefers the account with the largest bottleneck quota: the smaller of its remaining 5-hour and weekly percentages. Eligibility is checked before accounts are scored.
+
+Completed quota status is cached in each process for 120 seconds; canceled lookups are not cached. If quota data is unavailable, selection falls back to eligible accounts rather than treating missing status as confirmed capacity. Ties, including when every scored account has zero remaining, use the existing rotation order. Most-available routing is best-effort: cached or changing provider status means it cannot guarantee that the selected account has capacity when a request runs.
+
 ## Account store and security
 
 The default store is:
