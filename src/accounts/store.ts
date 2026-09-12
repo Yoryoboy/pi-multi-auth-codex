@@ -1,5 +1,12 @@
 import { mkdir, rmdir, stat, utimes } from "node:fs";
-import { mkdir as mkdirAsync, open, readFile, rename, rm, chmod } from "node:fs/promises";
+import {
+  mkdir as mkdirAsync,
+  open,
+  readFile,
+  rename,
+  rm,
+  chmod,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -24,15 +31,28 @@ export interface Account {
   rateLimitedUntilByModel?: Record<string, number>;
 }
 
+export type RoutingStrategy = "round-robin" | "most-available";
+
 export interface Store {
   version: 2;
   accounts: Account[];
   /** Stable identity of the account selected most recently. */
   lastSelectedAccountId?: string | null;
   lastRotation?: number | null;
+  routingStrategy?: RoutingStrategy;
 }
 
-export const DEFAULT_STORE_PATH = join(homedir(), ".pi", "agent", "pi-multi-auth-codex", "accounts.json");
+export function effectiveRoutingStrategy(store: Store): RoutingStrategy {
+  return store.routingStrategy ?? "round-robin";
+}
+
+export const DEFAULT_STORE_PATH = join(
+  homedir(),
+  ".pi",
+  "agent",
+  "pi-multi-auth-codex",
+  "accounts.json",
+);
 const LOCK_UPDATE_MS = 5_000;
 const LOCK_STALE_MS = 30_000;
 const LOCK_RETRIES = { retries: 50, minTimeout: 10, maxTimeout: 100 };
@@ -49,7 +69,9 @@ export class StoreCommitUncertainError extends Error {
   readonly code = "STORE_COMMIT_UNCERTAIN";
 
   constructor() {
-    super("Account store mutation may have committed; reload the store before retrying");
+    super(
+      "Account store mutation may have committed; reload the store before retrying",
+    );
     this.name = "StoreCommitUncertainError";
   }
 }
@@ -59,61 +81,161 @@ function invalidStore(): Error {
 }
 
 function isTimestamp(value: unknown): value is number | null {
-  return value === null || (typeof value === "number" && Number.isFinite(value) && value >= 0);
+  return (
+    value === null ||
+    (typeof value === "number" && Number.isFinite(value) && value >= 0)
+  );
 }
 
 function validateAccount(value: unknown): asserts value is Account {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalidStore();
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw invalidStore();
   const account = value as Record<string, unknown>;
   const allowedKeys = new Set([
-    "alias", "id", "accessToken", "refreshToken", "idToken", "email", "planType",
-    "accountId", "expiresAt", "enabled", "usageCount", "lastUsed", "rateLimitedUntil", "authInvalidAt", "rateLimitedUntilByModel",
+    "alias",
+    "id",
+    "accessToken",
+    "refreshToken",
+    "idToken",
+    "email",
+    "planType",
+    "accountId",
+    "expiresAt",
+    "enabled",
+    "usageCount",
+    "lastUsed",
+    "rateLimitedUntil",
+    "authInvalidAt",
+    "rateLimitedUntilByModel",
   ]);
-  if (Object.keys(account).some((key) => !allowedKeys.has(key))) throw invalidStore();
-  const requiredStrings = ["alias", "id", "accessToken", "refreshToken", "accountId"];
-  if (requiredStrings.some((key) => typeof account[key] !== "string" || account[key] === "")) throw invalidStore();
+  if (Object.keys(account).some((key) => !allowedKeys.has(key)))
+    throw invalidStore();
+  const requiredStrings = [
+    "alias",
+    "id",
+    "accessToken",
+    "refreshToken",
+    "accountId",
+  ];
+  if (
+    requiredStrings.some(
+      (key) => typeof account[key] !== "string" || account[key] === "",
+    )
+  )
+    throw invalidStore();
   for (const key of ["idToken", "email", "planType"]) {
-    if (key in account && account[key] !== undefined && typeof account[key] !== "string") throw invalidStore();
+    if (
+      key in account &&
+      account[key] !== undefined &&
+      typeof account[key] !== "string"
+    )
+      throw invalidStore();
   }
-  if (typeof account.expiresAt !== "number" || !Number.isFinite(account.expiresAt) || account.expiresAt < 0) throw invalidStore();
-  if (typeof account.enabled !== "boolean" || typeof account.usageCount !== "number" || !Number.isInteger(account.usageCount) || account.usageCount < 0) throw invalidStore();
-  if (!isTimestamp(account.lastUsed) || !isTimestamp(account.rateLimitedUntil) || !isTimestamp(account.authInvalidAt)) throw invalidStore();
-     if ("rateLimitedUntilByModel" in account) {
-       const deadlines = account.rateLimitedUntilByModel;
-       if (!deadlines || typeof deadlines !== "object" || Array.isArray(deadlines)
-         || Object.entries(deadlines).some(([modelId, deadline]) => modelId === "" || !isTimestamp(deadline) || deadline === null)) throw invalidStore();
-     }
+  if (
+    typeof account.expiresAt !== "number" ||
+    !Number.isFinite(account.expiresAt) ||
+    account.expiresAt < 0
+  )
+    throw invalidStore();
+  if (
+    typeof account.enabled !== "boolean" ||
+    typeof account.usageCount !== "number" ||
+    !Number.isInteger(account.usageCount) ||
+    account.usageCount < 0
+  )
+    throw invalidStore();
+  if (
+    !isTimestamp(account.lastUsed) ||
+    !isTimestamp(account.rateLimitedUntil) ||
+    !isTimestamp(account.authInvalidAt)
+  )
+    throw invalidStore();
+  if ("rateLimitedUntilByModel" in account) {
+    const deadlines = account.rateLimitedUntilByModel;
+    if (
+      !deadlines ||
+      typeof deadlines !== "object" ||
+      Array.isArray(deadlines) ||
+      Object.entries(deadlines).some(
+        ([modelId, deadline]) =>
+          modelId === "" || !isTimestamp(deadline) || deadline === null,
+      )
+    )
+      throw invalidStore();
+  }
 }
 
 function validateStore(value: unknown): asserts value is Store {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalidStore();
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw invalidStore();
   const store = value as Record<string, unknown>;
-  if (Object.keys(store).some((key) => !["version", "accounts", "lastSelectedAccountId", "lastRotation"].includes(key))) throw invalidStore();
-  if (store.version !== 2 || !Array.isArray(store.accounts)) throw invalidStore();
-  if ("lastSelectedAccountId" in store && store.lastSelectedAccountId !== null
-     && (typeof store.lastSelectedAccountId !== "string" || store.lastSelectedAccountId === "")) throw invalidStore();
-  if ("lastRotation" in store && !isTimestamp(store.lastRotation)) throw invalidStore();
+  if (
+    Object.keys(store).some(
+      (key) =>
+        ![
+          "version",
+          "accounts",
+          "lastSelectedAccountId",
+          "lastRotation",
+          "routingStrategy",
+        ].includes(key),
+    )
+  )
+    throw invalidStore();
+  if (store.version !== 2 || !Array.isArray(store.accounts))
+    throw invalidStore();
+  if (
+    "routingStrategy" in store &&
+    store.routingStrategy !== "round-robin" &&
+    store.routingStrategy !== "most-available"
+  )
+    throw invalidStore();
+  if (
+    "lastSelectedAccountId" in store &&
+    store.lastSelectedAccountId !== null &&
+    (typeof store.lastSelectedAccountId !== "string" ||
+      store.lastSelectedAccountId === "")
+  )
+    throw invalidStore();
+  if ("lastRotation" in store && !isTimestamp(store.lastRotation))
+    throw invalidStore();
   for (const account of store.accounts) validateAccount(account);
 }
 
 function migrateV1(value: unknown): Store {
-     if (!value || typeof value !== "object" || Array.isArray(value)) throw invalidStore();
-     const old = value as Record<string, unknown>;
-     if (old.version !== 1 || !Array.isArray(old.accounts)
-       || Object.keys(old).some((key) => !["version", "accounts", "rotationIndex", "lastRotation"].includes(key))) throw invalidStore();
-     if ("rotationIndex" in old && (typeof old.rotationIndex !== "number" || !Number.isInteger(old.rotationIndex) || old.rotationIndex < 0)) throw invalidStore();
-     if ("lastRotation" in old && !isTimestamp(old.lastRotation)) throw invalidStore();
-     for (const account of old.accounts) validateAccount(account);
-     const migrated: Store = { version: 2, accounts: old.accounts as Account[] };
-     if ("lastRotation" in old) migrated.lastRotation = old.lastRotation as number | null;
-     return migrated;
-   }
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw invalidStore();
+  const old = value as Record<string, unknown>;
+  if (
+    old.version !== 1 ||
+    !Array.isArray(old.accounts) ||
+    Object.keys(old).some(
+      (key) =>
+        !["version", "accounts", "rotationIndex", "lastRotation"].includes(key),
+    )
+  )
+    throw invalidStore();
+  if (
+    "rotationIndex" in old &&
+    (typeof old.rotationIndex !== "number" ||
+      !Number.isInteger(old.rotationIndex) ||
+      old.rotationIndex < 0)
+  )
+    throw invalidStore();
+  if ("lastRotation" in old && !isTimestamp(old.lastRotation))
+    throw invalidStore();
+  for (const account of old.accounts) validateAccount(account);
+  const migrated: Store = { version: 2, accounts: old.accounts as Account[] };
+  if ("lastRotation" in old)
+    migrated.lastRotation = old.lastRotation as number | null;
+  return migrated;
+}
 
-   const emptyStore = (): Store => ({ version: 2, accounts: [] });
+const emptyStore = (): Store => ({ version: 2, accounts: [] });
 
 export class AccountStore {
   readonly path: string;
-  
+
   private localMutation: Promise<void> = Promise.resolve();
 
   constructor(options: AccountStoreOptions = {}) {
@@ -135,7 +257,10 @@ export class AccountStore {
         return next;
       });
     });
-    this.localMutation = operation.then(() => undefined, () => undefined);
+    this.localMutation = operation.then(
+      () => undefined,
+      () => undefined,
+    );
     await operation;
     return result;
   }
@@ -152,19 +277,19 @@ export class AccountStore {
         throw invalidStore();
       }
       let current: Store;
-          if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-            && (parsed as Record<string, unknown>).version === 1
-            ) {
-                current = migrateV1(parsed);
-                await this.writeAtomically(current);
-              } else {
-                validateStore(parsed);
-                current = parsed;
-                  }
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        !Array.isArray(parsed) &&
+        (parsed as Record<string, unknown>).version === 1
+      ) {
+        current = migrateV1(parsed);
+        await this.writeAtomically(current);
+      } else {
+        validateStore(parsed);
+        current = parsed;
+      }
 
-
-          
-          
       await chmod(this.path, 0o600);
       return current;
     } catch (error) {
@@ -179,7 +304,10 @@ export class AccountStore {
     const directory = dirname(this.path);
     await mkdirAsync(directory, { recursive: true, mode: 0o700 });
     await chmod(directory, 0o700);
-    const temporaryPath = join(directory, `.${this.path.split("/").pop() ?? "accounts"}.${randomUUID()}.tmp`);
+    const temporaryPath = join(
+      directory,
+      `.${this.path.split("/").pop() ?? "accounts"}.${randomUUID()}.tmp`,
+    );
     let handle;
     let committed = false;
     try {
@@ -204,7 +332,8 @@ export class AccountStore {
       }
     } catch (error) {
       if (handle) await handle.close().catch(() => undefined);
-      if (!committed) await rm(temporaryPath, { force: true }).catch(() => undefined);
+      if (!committed)
+        await rm(temporaryPath, { force: true }).catch(() => undefined);
       throw error;
     }
   }
@@ -225,7 +354,9 @@ export class AccountStore {
       stale: LOCK_STALE_MS,
       update: LOCK_UPDATE_MS,
       retries: LOCK_RETRIES,
-      onCompromised: (error) => { throw error; },
+      onCompromised: (error) => {
+        throw error;
+      },
     });
     try {
       return await operation();
@@ -235,6 +366,8 @@ export class AccountStore {
   }
 }
 
-export function createAccountStore(options: AccountStoreOptions = {}): AccountStore {
+export function createAccountStore(
+  options: AccountStoreOptions = {},
+): AccountStore {
   return new AccountStore(options);
 }
