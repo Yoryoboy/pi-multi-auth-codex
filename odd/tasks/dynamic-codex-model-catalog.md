@@ -27,7 +27,7 @@ Users expect `codex-multi` to expose the same supported Codex models as Pi's bui
 - Strategy: ask-on-risk
 - Forecast: under 120 authored changed lines
 - Branch: `fix/dynamic-codex-model-catalog`
-- Commit evidence: pending explicit user authorization
+- Commit evidence: `b85a145` (`fix(models): mirror runtime Codex catalog`)
 
 ## TDD
 - Mode: enabled for this regression fix
@@ -39,12 +39,12 @@ Users expect `codex-multi` to expose the same supported Codex models as Pi's bui
   - Route: delegated (`gentle-ai-worker`), because the implementation requires coordinated non-trivial edits across source and tests.
   - Acceptance: a focused test proves `codex-multi` receives models exposed by Pi's effective `openai-codex` runtime registry.
   - Check: focused Vitest command fails before implementation for the expected missing behavior.
-  - Evidence: focused RED failed 2/37 because the runtime-only `gpt-6-luna` model was absent.
+  - Evidence: focused RED failed 2/37 because the runtime-only `gpt-6-luna` model was absent; delivered in `b85a145`.
 - [x] **ODD-2 — Resolve and register the effective catalog**
   - Route: delegated (`gentle-ai-worker`) in the same bounded writer task.
   - Acceptance: runtime models are preferred, explicit injected models still win, and the bundled catalog remains a fallback.
   - Checks: focused tests, full `npm test`, and `npm run typecheck` pass.
-  - Evidence: focused suite 38/38; full suite 219/219; TypeScript clean.
+  - Evidence: focused suite 38/38; full suite 219/219; TypeScript clean; delivered in `b85a145`.
 - [ ] **ODD-3 — Verify runtime model parity**
   - Route: delegated (`gentle-ai-verify`), required because native assessment was unavailable and therefore treated as high risk.
   - Acceptance: `codex-multi` contains the dynamically refreshed models present under `openai-codex` in the local Pi runtime.
@@ -52,7 +52,7 @@ Users expect `codex-multi` to expose the same supported Codex models as Pi's bui
   - Evidence: independent focused suite 38/38, full suite 219/219, typecheck clean, and source diagnostics contain only pre-existing style findings. Live interactive parity remains pending because `pi --list-models` exits before `session_start` and therefore cannot exercise this fix.
 
 ## Progress
-The delegated writer added strict RED/GREEN regression coverage and implemented explicit-model > runtime-catalog > bundled-catalog precedence. `session_start` now re-registers `codex-multi` using effective `openai-codex` models from `ctx.modelRegistry`. README behavior is updated. Independent verification passed; only confirmation from a freshly started interactive Pi session remains. Commit remains pending explicit user authorization.
+The delegated writer added strict RED/GREEN regression coverage and implemented explicit-model > runtime-catalog > bundled-catalog precedence. `session_start` now re-registers `codex-multi` using effective `openai-codex` models from `ctx.modelRegistry`. README behavior is updated. Independent verification passed; only confirmation from a freshly started interactive Pi session remains. The implementation work unit is committed as `b85a145`.
 
 ## Verification Evidence
 - Baseline `pi --version`: `0.87.1`.
