@@ -19,6 +19,34 @@ describe("codex-multi provider", () => {
         ]);
   });
 
+  it("mirrors the runtime openai-codex catalog when no explicit models are provided", () => {
+    const registerProvider = vi.fn();
+    const runtimeModels = [{ id: "gpt-6-luna", provider: "openai-codex", api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api/codex", name: "GPT-6 Luna", reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 128000 }] as any;
+    createProvider({ resolveAccount: vi.fn(), runtimeModels })({ registerProvider } as never);
+
+    expect(registerProvider).toHaveBeenCalledOnce();
+    const definition = registerProvider.mock.calls[0][1];
+    expect(definition.models.map((model: { id: string }) => model.id)).toEqual(["gpt-6-luna"]);
+  });
+
+  it("falls back to the bundled catalog when the runtime catalog is empty", () => {
+    const registerProvider = vi.fn();
+    createProvider({ resolveAccount: vi.fn(), runtimeModels: [] })({ registerProvider } as never);
+
+    const definition = registerProvider.mock.calls[0][1];
+    expect(definition.models.map((model: { id: string }) => model.id)).toContain("gpt-5.4");
+  });
+
+  it("prefers explicit injected models over the runtime catalog", () => {
+    const registerProvider = vi.fn();
+    const explicit = [{ id: "explicit-codex", provider: "openai-codex", api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api/codex", name: "Explicit", reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 128000 }] as any;
+    const runtimeModels = [{ id: "gpt-6-luna", provider: "openai-codex", api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api/codex", name: "GPT-6 Luna", reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 128000 }] as any;
+    createProvider({ resolveAccount: vi.fn(), models: explicit, runtimeModels })({ registerProvider } as never);
+
+    const definition = registerProvider.mock.calls[0][1];
+    expect(definition.models.map((model: { id: string }) => model.id)).toEqual(["explicit-codex"]);
+  });
+
   it("registers the provider thinking-level wire mapping", () => {
     const registerProvider = vi.fn();
     createCodexMultiProvider({ resolveAccount: vi.fn() })({ registerProvider } as never);

@@ -2,7 +2,9 @@ import type {
   ExtensionAPI,
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { createCodexMultiProvider, defaultAccountStore } from "./provider.js";
+import type { CodexMultiOptions } from "./provider.js";
 import {
   createDefaultAccountResolver,
   defaultAccountResolver,
@@ -126,10 +128,16 @@ export default function extension(
         quotaCache,
       })
     : defaultAccountResolver;
-  createCodexMultiProvider({
-    resolveAccount: providerResolver,
-    store: providerStore,
-  })(pi);
+  const registerCodexProvider = (runtimeModels?: readonly Model<Api>[]) => {
+    const options: CodexMultiOptions = {
+      resolveAccount: providerResolver,
+      store: providerStore,
+    };
+    if (runtimeModels && runtimeModels.length > 0)
+      options.runtimeModels = runtimeModels;
+    return createCodexMultiProvider(options)(pi);
+  };
+  registerCodexProvider();
   const active = new Set<{
     controller: AbortController;
     settled: Promise<unknown>;
@@ -220,6 +228,11 @@ export default function extension(
     await stop();
     runtimeActive = true;
     const mine = ++generation;
+    const runtimeCodexModels =
+      ctx.modelRegistry
+        ?.getAll()
+        .filter((model) => model.provider === "openai-codex") ?? [];
+    if (runtimeCodexModels.length > 0) registerCodexProvider(runtimeCodexModels);
     await updateStatus(ctx, mine);
   });
   pi.on("turn_end", async (_event, ctx) => {
