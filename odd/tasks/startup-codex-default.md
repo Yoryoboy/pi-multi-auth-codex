@@ -25,7 +25,7 @@ Pi resolves the initial model after extension factories but before `session_star
 
 ## Delivery
 - Forecast: under 100 authored changed lines; strategy: ask-on-risk; no PR requested.
-- Branch: `fix/startup-codex-default` (created from main before source edits).
+- Branch: implemented on `fix/startup-codex-default`, fast-forwarded to `main` and pushed to `origin/main`.
 - Commit evidence: `7993b6f7461c2bf191ea3a7e65280d68afbf356d` (`fix(models): register host Codex catalog before startup`), containing the fix, regression tests, and feature document.
 
 ## Tasks
@@ -43,7 +43,7 @@ Pi resolves the initial model after extension factories but before `session_star
   - Evidence: independent focused 47/47, full 228/228, typecheck clean; real Pi 0.87.1 `pi --list-models codex-multi` lists `gpt-6-sol`. User confirmed a fresh interactive session selects the configured default. Explicit CLI override and live resume were not tested.
 
 ## Progress
-Implementation and independent checks complete on `fix/startup-codex-default`; user confirmed the fresh interactive default works. Scope is the host-bundled catalog; downloaded-only overlay models remain outside this change. Native risk assessment could not inspect the untracked scope, so an independent verifier ran. User authorized committing and pushing directly to main without a PR. Pre-commit verification of the staged snapshot: `npm test` 228/228, `npm run typecheck` clean, `git diff --cached --check` clean. Work-unit commit: `7993b6f`.
+Implementation and independent checks complete on `main`; user confirmed the fresh interactive default works. Scope is the host-bundled catalog; downloaded-only overlay models remain outside this change. Native risk assessment could not inspect the untracked scope, so an independent verifier ran. User authorized committing and pushing directly to main without a PR. Pre-commit verification of the staged snapshot: `npm test` 228/228, `npm run typecheck` clean, `git diff --cached --check` clean. Work-unit commit: `7993b6f`.
 
 ## Next step
-Fast-forward main and push without a PR. Optional later live checks: explicit CLI override and session resume.
+Delivery to `origin/main` completed without a PR. Optional later live checks: explicit CLI override and session resume.
