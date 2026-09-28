@@ -1,5 +1,5 @@
 import { createAssistantMessageEventStream, openAICodexResponsesApi, type Api, type AssistantMessageEvent, type Model, type SimpleStreamOptions, type StreamFunction } from "@earendil-works/pi-ai/compat";
-import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { AccountStore, StoreCommitUncertainError } from "./accounts/store.js";
 import { AccountSelectionError } from "./accounts/selector.js";
@@ -11,7 +11,14 @@ export type AccountResolver = (signal?: AbortSignal, modelId?: string, excludeAc
 export type ResponsesStreamer = StreamFunction<Api, SimpleStreamOptions>;
 export interface CodexMultiOptions { resolveAccount: AccountResolver; models?: readonly Model<Api>[]; runtimeModels?: readonly Model<Api>[]; streamResponses?: ResponsesStreamer; store?: AccountStore; sleep?: (ms: number, signal?: AbortSignal) => Promise<void>; now?: () => number; }
 
-const DEFAULT_MODELS = openaiCodexProvider().getModels();
+/**
+ * Bundled Codex catalog. Imported from `providers/all` because Pi 0.87.1
+ * aliases that specifier to the running host bundle, so the extension sees the
+ * host's model data (for example `gpt-6-sol`) instead of its own locked pi-ai
+ * catalog. Registered during the extension factory, before Pi resolves the
+ * initial model, so no model is ever selected here.
+ */
+const DEFAULT_MODELS = getBuiltinModels("openai-codex");
 /** Prefer explicit injected models, then the effective openai-codex runtime catalog, then the bundled catalog. */
 export function resolveCodexModels(options: Pick<CodexMultiOptions, "models" | "runtimeModels">) {
   const runtimeModels = options.runtimeModels && options.runtimeModels.length > 0 ? options.runtimeModels : undefined;
