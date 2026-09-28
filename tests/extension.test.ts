@@ -7,6 +7,18 @@ function deferred<T = void>() { let resolve!: (value: T) => void; let reject!: (
 function pendingOAuth() { const cleanup = deferred<void>(); const operation: any = new Promise((_resolve, reject) => { cleanup.promise.then(() => reject(Object.assign(new Error("aborted"), { code: "OAUTH_ABORTED" }))); }); operation.ready = Promise.resolve({ url: "https://auth.example.test", state: "state", redirectUri: "http://localhost", port: 1455, pkce: { verifier: "v", challenge: "c" } }); operation.getFlow = () => undefined; return { operation, cleanup }; }
 describe("Pi extension registration", () => {
   it("registers provider, lifecycle hooks, and account command without OAuth", () => { const h = piHarness(); extension(h.pi); expect(h.handlers["codex-accounts"]).toBeTypeOf("function"); expect(h.events.session_start).toBeTypeOf("function"); expect(h.events.session_shutdown).toBeTypeOf("function"); expect(h.pi.registerProvider).toHaveBeenCalledWith("codex-multi", expect.any(Object)); });
+      it("mirrors the effective openai-codex runtime catalog when a session starts", async () => {
+        const h = piHarness();
+        const createStore = () => ({ load: vi.fn().mockResolvedValue({ accounts: [], lastSelectedAccountId: null }) });
+        extension(h.pi, { createStore: createStore as any });
+        const runtimeModel = { id: "gpt-6-luna", provider: "openai-codex", api: "openai-codex-responses", baseUrl: "https://chatgpt.com/backend-api/codex", name: "GPT-6 Luna", reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 128000 };
+        const c: any = ctx("tui");
+        c.modelRegistry = { getAll: vi.fn(() => [runtimeModel]) };
+        await h.events.session_start({}, c);
+        const registration = h.pi.registerProvider.mock.calls.filter((call: any[]) => call[0] === "codex-multi").at(-1);
+        expect(registration).toBeDefined();
+        expect(registration![1].models.map((model: any) => model.id)).toContain("gpt-6-luna");
+      });
       it("aborts every pending account quota request on shutdown", async () => {
         const h = piHarness(); const account = (id: string) => ({ alias: id, id, accountId: `${id}-provider`, accessToken: `${id}-access`, refreshToken: `${id}-refresh`, expiresAt: 9_999_999_999_999, enabled: true, usageCount: 0, lastUsed: null, rateLimitedUntil: null, authInvalidAt: null }); const a = account("a"); const b = account("b"); let resolveA!: (response: Response) => void; let resolveB!: (response: Response) => void; const fetch = vi.fn((_url: string | URL, init?: RequestInit) => new Promise<Response>((resolve) => { const id = String((init?.headers as Record<string, string>)["ChatGPT-Account-Id"]); if (id === "a-provider") resolveA = resolve; else resolveB = resolve; })); const store = { load: vi.fn().mockResolvedValueOnce({ accounts: [a], lastSelectedAccountId: a.id }).mockResolvedValue({ accounts: [a, b], lastSelectedAccountId: b.id }) }; extension(h.pi, { createStore: () => store as any, fetch }); const c: any = ctx("tui"); const start = h.events.session_start({}, c); await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1)); const turn = h.events.turn_end({}, c); await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2)); const shutdown = h.events.session_shutdown({}, c); expect((fetch.mock.calls[0]![1] as RequestInit).signal!.aborted).toBe(true); expect((fetch.mock.calls[1]![1] as RequestInit).signal!.aborted).toBe(true); resolveA(new Response("{}", { status: 500 })); resolveB(new Response("{}", { status: 500 })); await Promise.all([start, turn, shutdown]);
       });

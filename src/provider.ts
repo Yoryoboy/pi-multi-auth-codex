@@ -9,9 +9,14 @@ export const RATE_LIMIT_MIN_DELAY_MS = 1_000, RATE_LIMIT_MAX_DELAY_MS = 60_000, 
 export interface CodexAccount { accessToken: string; accountId: string; accountKey: string; refreshToken: string; }
 export type AccountResolver = (signal?: AbortSignal, modelId?: string, excludeAccountKeys?: ReadonlySet<string>) => CodexAccount | undefined | Promise<CodexAccount | undefined>;
 export type ResponsesStreamer = StreamFunction<Api, SimpleStreamOptions>;
-export interface CodexMultiOptions { resolveAccount: AccountResolver; models?: readonly Model<Api>[]; streamResponses?: ResponsesStreamer; store?: AccountStore; sleep?: (ms: number, signal?: AbortSignal) => Promise<void>; now?: () => number; }
+export interface CodexMultiOptions { resolveAccount: AccountResolver; models?: readonly Model<Api>[]; runtimeModels?: readonly Model<Api>[]; streamResponses?: ResponsesStreamer; store?: AccountStore; sleep?: (ms: number, signal?: AbortSignal) => Promise<void>; now?: () => number; }
 
 const DEFAULT_MODELS = openaiCodexProvider().getModels();
+/** Prefer explicit injected models, then the effective openai-codex runtime catalog, then the bundled catalog. */
+export function resolveCodexModels(options: Pick<CodexMultiOptions, "models" | "runtimeModels">) {
+  const runtimeModels = options.runtimeModels && options.runtimeModels.length > 0 ? options.runtimeModels : undefined;
+  return (options.models ?? runtimeModels ?? DEFAULT_MODELS).map(model => ({ ...model, provider: "codex-multi" })) as Model<"openai-codex-responses">[];
+}
 const DEFAULT_MODEL_ID = DEFAULT_MODELS[0]?.id ?? "gpt-5.6-sol";
 function safeError(message: string, aborted = false, modelId = DEFAULT_MODEL_ID): AssistantMessageEvent { return { type: "error", reason: aborted ? "aborted" : "error", error: { role: "assistant", content: [], api: "openai-codex-responses", provider: "codex-multi", model: modelId, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: aborted ? "aborted" : "error", errorMessage: message, timestamp: Date.now() } } as AssistantMessageEvent; }
 function cooldownDeadline(account: CodexAccount & { rateLimitedUntil?: number | null; rateLimitedUntilByModel?: Record<string, number> }, modelId: string, now: number, delay: number) {
@@ -62,7 +67,7 @@ async function defaultSleep(ms: number, signal?: AbortSignal) {
 }
 
 export function createCodexMultiProvider(options: CodexMultiOptions) {
-  const models = (options.models ?? DEFAULT_MODELS).map(model => ({ ...model, provider: "codex-multi" })) as Model<"openai-codex-responses">[];
+  const models = resolveCodexModels(options);
   const transport = options.streamResponses ?? openAICodexResponsesApi().streamSimple, sleep = options.sleep ?? defaultSleep, now = options.now ?? Date.now;
   const streamSimple: StreamFunction<"openai-codex-responses", SimpleStreamOptions> = (model, context, ro) => {
     const out = createAssistantMessageEventStream();

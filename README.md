@@ -14,10 +14,10 @@ Restart Pi, then:
 
 1. Run `/codex-accounts`.
 2. Choose **Add account** and complete the sign-in flow for each account you are authorized to use.
-3. Open `/model` and select any Codex model exposed by the installed matching `pi-ai` catalog.
+3. Open `/model` and select any Codex model exposed by Pi's `openai-codex` catalog.
 4. Press `Ctrl+S` if you want to save the model selection.
 
-The `codex-multi` provider exposes all Codex models supported by the installed matching `pi-ai` catalog. Cooldowns and failover are model-aware, so account rotation remains scoped to the selected model. This extension does not discover or create subscription entitlements and does not query the public `/v1/models` endpoint.
+The `codex-multi` provider mirrors the effective Codex models of Pi's `openai-codex` catalog. At session start it registers the models resolved by Pi's runtime model registry, so models added by `pi update --models` are available after a restart. When that runtime catalog is unavailable, it falls back to the catalog bundled with the installed matching `pi-ai` package. Cooldowns and failover are model-aware, so account rotation remains scoped to the selected model. This extension does not discover or create subscription entitlements and does not query the public `/v1/models` endpoint.
 
 ## What it does
 
