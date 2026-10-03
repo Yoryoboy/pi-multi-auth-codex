@@ -38,10 +38,10 @@ const emptyStore = (routingStrategy?: Store["routingStrategy"]): Store => ({
 });
 
 describe("account manager routing strategy", () => {
-  it("shows the effective strategy and changes it without fetching quotas", async () => {
-    const h = harness(emptyStore(), [
-      "Routing strategy: Round robin",
-      "Most available",
+  it.each([[undefined, "Fill first", "Most available", "most-available"], ["most-available", "Most available", "Fill first", "fill-first"], ["fill-first", "Fill first", "Round robin", "round-robin"]] as const)("shows %s and changes to %s without fetching quotas", async (initial, label, selection, expected) => {
+    const h = harness(emptyStore(initial), [
+      `Routing strategy: ${label}`,
+      selection,
       undefined,
     ]);
 
@@ -57,19 +57,20 @@ describe("account manager routing strategy", () => {
       "Codex accounts",
       expect.arrayContaining([
         "Add account",
-        "Routing strategy: Round robin",
+        `Routing strategy: ${label}`,
         "View all limits",
       ]),
     );
     expect(h.ui.select).toHaveBeenNthCalledWith(2, "Routing strategy", [
+      "Fill first",
       "Round robin",
       "Most available",
       "Back",
     ]);
-    expect(h.value().routingStrategy).toBe("most-available");
+    expect(h.value().routingStrategy).toBe(expected);
     expect(h.mutate).toHaveBeenCalledTimes(1);
     expect(h.ui.notify).toHaveBeenCalledWith(
-      "Routing strategy changed to Most available.",
+      `Routing strategy changed to ${selection}.`,
       "info",
     );
     expect(h.fetch).not.toHaveBeenCalled();

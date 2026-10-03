@@ -25,7 +25,7 @@ const account: Account = {
 };
 
 describe("setRoutingStrategy", () => {
-  it("persists a changed strategy while preserving all other state", async () => {
+  it.each(["fill-first", "most-available"] as const)("persists %s while preserving all other state", async (routingStrategy) => {
     const path = join(
       await mkdtemp(join(tmpdir(), "pi-multi-auth-manage-routing-")),
       "accounts.json",
@@ -40,9 +40,9 @@ describe("setRoutingStrategy", () => {
     };
     await store.mutate(() => initial);
 
-    const result = await setRoutingStrategy(store, "most-available");
+    const result = await setRoutingStrategy(store, routingStrategy);
 
-    expect(result).toEqual({ ...initial, routingStrategy: "most-available" });
+    expect(result).toEqual({ ...initial, routingStrategy });
     await expect(store.load()).resolves.toEqual(result);
   });
 

@@ -17,23 +17,23 @@ async function writeStore(value: unknown): Promise<string> {
 }
 
 describe("store routing strategy", () => {
-  it("defaults an absent strategy to round-robin without mutating the store", () => {
+  it("defaults an absent strategy to fill-first without mutating the store", () => {
     const store: Store = { version: 2, accounts: [] };
 
-    expect(effectiveRoutingStrategy(store)).toBe("round-robin");
+    expect(effectiveRoutingStrategy(store)).toBe("fill-first");
     expect(store).toEqual({ version: 2, accounts: [] });
   });
 
-  it("returns a persisted most-available strategy", async () => {
+  it.each(["fill-first", "round-robin", "most-available"] as const)("returns a persisted %s strategy", async (routingStrategy) => {
     const path = await writeStore({
       version: 2,
       accounts: [],
-      routingStrategy: "most-available",
+      routingStrategy,
     });
     const store = await new AccountStore({ path }).load();
 
-    expect(store.routingStrategy).toBe("most-available");
-    expect(effectiveRoutingStrategy(store)).toBe("most-available");
+    expect(store.routingStrategy).toBe(routingStrategy);
+    expect(effectiveRoutingStrategy(store)).toBe(routingStrategy);
   });
 
   it.each([null, "", "least-used", 1, false])(

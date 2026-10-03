@@ -114,7 +114,9 @@ export async function runAccountManager(
     );
     const strategy = effectiveRoutingStrategy(store);
     const strategyLabel =
-      strategy === "round-robin" ? "Round robin" : "Most available";
+      strategy === "fill-first"
+        ? "Fill first"
+        : strategy === "round-robin" ? "Round robin" : "Most available";
     const routingAction = `Routing strategy: ${strategyLabel}`;
     const choice = await deps.ui.select("Codex accounts", [
       "Add account",
@@ -158,13 +160,16 @@ async function manageRoutingStrategy(
   current: RoutingStrategy,
 ): Promise<void> {
   const selected = await deps.ui.select("Routing strategy", [
+    "Fill first",
     "Round robin",
     "Most available",
     "Back",
   ]);
   if (selected === undefined || selected === "Back") return;
   const strategy: RoutingStrategy =
-    selected === "Round robin" ? "round-robin" : "most-available";
+    selected === "Fill first"
+      ? "fill-first"
+      : selected === "Round robin" ? "round-robin" : "most-available";
   if (strategy === current) return;
   const result = await setRoutingStrategy(deps.store, strategy);
   if ("uncertain" in result) {

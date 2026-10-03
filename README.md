@@ -21,7 +21,7 @@ The `codex-multi` provider mirrors the effective Codex models of Pi's `openai-co
 
 ## What it does
 
-- Rotates accounts globally across Pi processes using a locked shared store and cross-process round-robin state.
+- Routes accounts across Pi processes using a locked shared store and shared selection state.
 - Refreshes OAuth access tokens when they expire.
 - Marks accounts unavailable after authentication failures, and applies quota/rate-limit cooldowns to the affected account/model combination before failing over.
 - Provides `/codex-accounts` to add, reauthenticate, enable, disable, remove, refresh, inspect the store path, and view a one-time summary of all accounts' 5-hour and weekly limits.
@@ -30,7 +30,8 @@ The `codex-multi` provider mirrors the effective Codex models of Pi's `openai-co
 
 Use the top-level **Routing strategy** option in `/codex-accounts` to choose how the extension selects an eligible account. The choice is persisted in the shared account store and applies across Pi processes.
 
-- **Round robin** is the default and preserves the existing rotation behavior.
+- **Fill first** is the default: reuse the selected account until it becomes ineligible, then move to the next eligible account. Prompt cache is per account, so avoiding unnecessary switches preserves cached prompts. This strategy does not fetch quotas.
+- **Round robin** rotates to the next eligible account on every request.
 - **Most available** prefers the account with the largest bottleneck quota: the smaller of its remaining 5-hour and weekly percentages. Eligibility is checked before accounts are scored.
 
 Completed quota status is cached in each process for 120 seconds; canceled lookups are not cached. If quota data is unavailable, selection falls back to eligible accounts rather than treating missing status as confirmed capacity. Ties, including when every scored account has zero remaining, use the existing rotation order. Most-available routing is best-effort: cached or changing provider status means it cannot guarantee that the selected account has capacity when a request runs.

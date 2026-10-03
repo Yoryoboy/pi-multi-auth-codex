@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import lockfile from "proper-lockfile";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AccountStore, type Account } from "../src/accounts/store.js";
 import {
   AUTH_INVALID_COOLDOWN_MS,
@@ -34,11 +34,54 @@ function runSelector(path: string): Promise<string> {
 
 async function seed(path: string, accounts: Account[]) {
   const store = new AccountStore({ path });
-  await store.mutate((current) => ({ ...current, accounts }));
+  await store.mutate((current) => ({ ...current, accounts, routingStrategy: "round-robin" }));
   return store;
 }
 
 describe("account selector", () => {
+  it.each(["fill-first", undefined] as const)("keeps the selected account for strategy %s without quota fetching", async (routingStrategy) => {
+    const store = await seed(await storePath(), [account("a"), account("b")]);
+    await store.mutate(({ routingStrategy: _previous, ...current }) => routingStrategy ? { ...current, routingStrategy } : current);
+    const quotaResolver = vi.fn();
+    expect((await selectAccount(store, { now: 100, quotaResolver })).accountKey).toBe("a");
+    expect((await selectAccount(store, { now: 200, quotaResolver })).accountKey).toBe("a");
+    expect(quotaResolver).not.toHaveBeenCalled();
+    await expect(store.load()).resolves.toMatchObject({
+      lastSelectedAccountId: "a", lastRotation: 200,
+      accounts: [{ id: "a", usageCount: 2, lastUsed: 200 }, { id: "b", usageCount: 0, lastUsed: null }],
+    });
+  });
+
+  it.each([
+    { enabled: false },
+    { rateLimitedUntilByModel: { "gpt-test": 300 } },
+    { rateLimitedUntilByModel: { "*": 300 } },
+    { rateLimitedUntil: 300 },
+    { authInvalidAt: 100 },
+    {},
+  ] as Partial<Account>[])("rotates an ineligible or excluded sticky account in cursor order: %j", async (overrides) => {
+    const store = await seed(await storePath(), [account("a"), account("b"), account("c", { enabled: false }), account("d")]);
+    await store.mutate((current) => ({ ...current, routingStrategy: "fill-first", lastSelectedAccountId: "b", accounts: current.accounts.map((a) => a.id === "b" ? { ...a, ...overrides } : a) }));
+    const options = { now: 200, modelId: "gpt-test", excludeAccountKeys: Object.keys(overrides).length ? undefined : new Set(["b"]) };
+    expect((await selectAccount(store, options)).accountKey).toBe("d");
+    expect((await selectAccount(store, options)).accountKey).toBe("d");
+  });
+
+  it.each([
+    [{ authInvalidAt: 100 }, { allowAuthInvalid: true }],
+    [{ authInvalidAt: 100 }, { now: 100 + AUTH_INVALID_COOLDOWN_MS }],
+    [{ rateLimitedUntilByModel: { other: 300 } }, {}],
+  ] as const)("keeps an eligible sticky account with eligibility overrides %j", async (overrides, options) => {
+    const store = await seed(await storePath(), [account("a"), account("b", overrides)]);
+    await store.mutate((current) => ({ ...current, routingStrategy: "fill-first", lastSelectedAccountId: "b" }));
+    expect((await selectAccount(store, { now: 200, modelId: "gpt-test", ...options })).accountKey).toBe("b");
+  });
+
+  it("falls back to the first eligible account when the sticky identity is missing", async () => {
+    const store = await seed(await storePath(), [account("a", { enabled: false }), account("b")]);
+    await store.mutate((current) => ({ ...current, routingStrategy: "fill-first", lastSelectedAccountId: "deleted" }));
+    expect((await selectAccount(store, { now: 200 })).accountKey).toBe("b");
+  });
       it("advances from the selected identity across changing eligibility", async () => {
         const path = await storePath();
         const store = await seed(path, [account("a"), account("b"), account("c")]);

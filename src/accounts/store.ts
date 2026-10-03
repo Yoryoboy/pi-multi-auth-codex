@@ -31,7 +31,7 @@ export interface Account {
   rateLimitedUntilByModel?: Record<string, number>;
 }
 
-export type RoutingStrategy = "round-robin" | "most-available";
+export type RoutingStrategy = "round-robin" | "most-available" | "fill-first";
 
 export interface Store {
   version: 2;
@@ -43,7 +43,7 @@ export interface Store {
 }
 
 export function effectiveRoutingStrategy(store: Store): RoutingStrategy {
-  return store.routingStrategy ?? "round-robin";
+  return store.routingStrategy ?? "fill-first";
 }
 
 export const DEFAULT_STORE_PATH = join(
@@ -187,7 +187,8 @@ function validateStore(value: unknown): asserts value is Store {
   if (
     "routingStrategy" in store &&
     store.routingStrategy !== "round-robin" &&
-    store.routingStrategy !== "most-available"
+    store.routingStrategy !== "most-available" &&
+    store.routingStrategy !== "fill-first"
   )
     throw invalidStore();
   if (

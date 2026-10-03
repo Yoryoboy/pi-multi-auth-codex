@@ -1,5 +1,5 @@
 import type { QuotaResult } from "./quota.js";
-import type { Account, AccountStore, Store } from "./store.js";
+import { effectiveRoutingStrategy, type Account, type AccountStore, type Store } from "./store.js";
 export const AUTH_INVALID_COOLDOWN_MS = 5 * 60 * 1_000;
 
 export function rankMostAvailableAccount(
@@ -126,7 +126,7 @@ export async function selectAccount(
   let observations: ReadonlyMap<string, QuotaResult> | undefined;
   if (options.quotaResolver) {
     const initial = await store.load();
-    if ((initial.routingStrategy ?? "round-robin") === "most-available") {
+    if (effectiveRoutingStrategy(initial) === "most-available") {
       const candidates = cursorOrderedEligible(initial, options, now);
       if (!candidates.length) throw unavailable(initial.accounts);
       observations = await options.quotaResolver(candidates, options.signal);
@@ -139,11 +139,13 @@ export async function selectAccount(
     abortIfNeeded(options.signal);
     const candidates = cursorOrderedEligible(current, options, now);
     if (!candidates.length) throw unavailable(current.accounts);
+    const strategy = effectiveRoutingStrategy(current);
     const selected =
-      (current.routingStrategy ?? "round-robin") === "most-available" &&
-      observations
-        ? (rankMostAvailableAccount(candidates, observations) ?? candidates[0])
-        : candidates[0];
+      strategy === "fill-first"
+        ? (candidates.find((a) => a.id === current.lastSelectedAccountId) ?? candidates[0])
+        : strategy === "most-available" && observations
+          ? (rankMostAvailableAccount(candidates, observations) ?? candidates[0])
+          : candidates[0];
     snapshot = {
       accessToken: selected.accessToken,
       accountId: selected.accountId,

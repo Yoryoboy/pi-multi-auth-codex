@@ -35,6 +35,16 @@ const quotaResponse = (usedPercent: number) =>
   );
 
 describe("default quota-aware routing", () => {
+  it("defaults to sticky routing without fetching quotas", async () => {
+    const path = join(await mkdtemp(join(tmpdir(), "default-routing-")), "accounts.json");
+    const store = new AccountStore({ path });
+    await store.mutate((current) => ({ ...current, accounts: [account("a"), account("b")] }));
+    const fetch = vi.fn();
+    const resolver = createDefaultAccountResolver(store, { fetch });
+    await expect(resolver(undefined, "gpt-test")).resolves.toMatchObject({ accountKey: "a" });
+    await expect(resolver(undefined, "gpt-test")).resolves.toMatchObject({ accountKey: "a" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("exports an effective resolver and selects the most available account through prepareAccount", async () => {
     expect(exportedResolver).toBeTypeOf("function");
     const path = join(
